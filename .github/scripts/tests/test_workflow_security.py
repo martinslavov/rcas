@@ -6,8 +6,6 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[3] / ".github"
 WORKFLOWS = sorted((ROOT / "workflows").glob("*.yml"))
 PINNED = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40} # v\d+(\.\d+)*\S*$")
-# Chained Dependabot agent gates and their trusted run-record writer; they never check out or run PR code.
-WORKFLOW_RUN_ALLOWED = ("agentic-dependabot-qa.lock.yml", "agentic-dependabot-dod.lock.yml", "ci-agent-run-records.yml")
 DOCKER_LOGIN_WORKFLOWS = ("ci-component-tests.yml", "ci-sanity-tests.yml")
 
 
@@ -54,8 +52,7 @@ class WorkflowSecurityTest(unittest.TestCase):
             with self.subTest(workflow=path.name):
                 text = path.read_text(encoding="utf-8")
                 self.assertNotIn("pull_request_target", text)
-                if path.name not in WORKFLOW_RUN_ALLOWED:
-                    self.assertNotIn("workflow_run", text)
+                self.assertNotIn("workflow_run", text)
 
     def test_registry_logout_happens_before_pr_code_runs(self):
         for name in DOCKER_LOGIN_WORKFLOWS:
@@ -313,51 +310,6 @@ class WorkflowSecurityTest(unittest.TestCase):
             with self.subTest(operation=operation):
                 self.assertIn(operation, steps[tracking])
         self.assertIn("secrets.PROJECT_TOKEN", steps[board])
-
-    def test_dependabot_agent_gates_are_chained_with_exact_check_names(self):
-        gates = {
-            "agentic-dependabot-pr-review.md": "PR Review",
-            "agentic-dependabot-qa.md": "QA Agent",
-            "agentic-dependabot-dod.md": "Definition of Done",
-        }
-        for name, check in gates.items():
-            with self.subTest(workflow=name):
-                text = (ROOT / "workflows" / name).read_text(encoding="utf-8")
-                self.assertIn(f"create-check-run:\n    name: {check}\n", text)
-                self.assertIn("max-ai-credits: 25", text)
-        review = (ROOT / "workflows" / "agentic-dependabot-pr-review.md").read_text(encoding="utf-8")
-        qa = (ROOT / "workflows" / "agentic-dependabot-qa.md").read_text(encoding="utf-8")
-        dod = (ROOT / "workflows" / "agentic-dependabot-dod.md").read_text(encoding="utf-8")
-        self.assertIn('bots: ["dependabot[bot]"]', review)
-        self.assertIn("      - Dependabot PR Review\n", qa)
-        self.assertIn("workflows: [Dependabot QA]", dod)
-
-    def test_dependabot_agent_gates_cannot_merge_or_write_directly(self):
-        for name in ("agentic-dependabot-pr-review", "agentic-dependabot-qa", "agentic-dependabot-dod"):
-            with self.subTest(workflow=name):
-                source = (ROOT / "workflows" / f"{name}.md").read_text(encoding="utf-8")
-                frontmatter = source.split("---", 2)[1]
-                self.assertRegex(frontmatter, r"(?m)^  contents: read$")
-                self.assertNotRegex(frontmatter, r"(?m)^  (contents|pull-requests|issues|checks|statuses): write$")
-                self.assertNotIn("merge-pull-request", frontmatter)
-                self.assertNotIn("statuses:", frontmatter)
-                lock = (ROOT / "workflows" / f"{name}.lock.yml").read_text(encoding="utf-8")
-                self.assertNotIn("gh pr merge", lock)
-                self.assertNotIn("pulls.merge", lock)
-
-    def test_agent_run_records_workflow_is_trusted_and_least_privileged(self):
-        text = (ROOT / "workflows" / "ci-agent-run-records.yml").read_text(encoding="utf-8")
-        self.assertIn("permissions: {}", text)
-        job = _jobs(text)["record"]
-        self.assertIn("startsWith(github.event.workflow_run.head_branch, 'dependabot/github_actions/')", job)
-        for scope in ("actions: read", "checks: read", "pull-requests: read", "issues: write"):
-            self.assertIn(scope, job)
-        self.assertNotIn("contents:", job)
-        self.assertNotIn("actions/checkout", text)
-        self.assertIn("This agent-run record already exists.", job)
-        self.assertIn("<!-- agent-run: ${JSON.stringify(record)} -->", job)
-        self.assertIn("failure_source: failureSource", job)
-        self.assertIn("status = succeeded ? 'success' : 'failure'", job)
 
 
 if __name__ == "__main__":
