@@ -103,7 +103,7 @@ The steps below are what the agents follow:
    derive a short, meaningful slug yourself: lowercase, ASCII letters, digits and `-` only, fixing obvious typos, e.g. `feature/code-review-agent`.
    Only `feature/*` and `hotfix/*` branches can be created.
 3. **Work.** Before creating a branch or implementing, the engineer reads the Architect design note or confirms the skip comment. If `architecture-approval-required` is present, the engineer must find the explicit `<!-- architecture-approved -->` user comment first; otherwise stop without creating a branch or changing files. Commit the changes with clear messages. Never push to `main` directly.
-4. **Pull request.** When done, push the branch and open a PR against `main` using `.github/pull_request_template.md`.
+4. **Pull request.** When done, push the branch and open a PR against `main` using `.github/PULL_REQUEST_TEMPLATE/pull_request_template.md`.
    Reference the issue from step 1 under "Pull-request relations" as `Closes #N`: GitHub closes it on merge and `PR Issue Close` moves it to Done.
    The `PR Issue Tracking` workflow adds the tracking issue link to the description. Do not put review, QA or CI/check-status
    claims in the PR description (including "no review performed" or "QA pending"); commit statuses and check runs are the
@@ -133,7 +133,7 @@ The steps below are what the agents follow:
    fails with a Projects classic error. The engineer makes no further fix commits or merge while the label is present. Automated agents never
    remove it; only a human removing it explicitly resumes the loop. Existing round markers remain the source of truth after resumption.
 7. **Bounded CI fix loop.** For failed non-agent required checks (including `analyze`, `dependency-review` and `secret-scan`),
-   the engineer follows the diagnosis/reproduction commands and signature rules in `senior-java-software-engineer.agent.md`.
+   the engineer follows the diagnosis/reproduction commands and signature rules in `engineer.agent.md`.
    Read the current head's failed checks with `gh pr checks <pr> -R martinslavov/rcas --json name,state,link`; identify the
    matching run from `gh run list -R martinslavov/rcas --branch <branch> --json databaseId,name,conclusion,headSha,url`,
    read `gh run view <id> -R martinslavov/rcas --log-failed` and download test reports when available. The first failing
@@ -174,7 +174,7 @@ New or changed workflows must use `permissions: {}` at the top level with minima
 
 ### QA test scope and status
 
-- A PR is docs-only only if every changed file matches `*.md`, `.github/agents/**`, `.github/copilot-instructions.md`, `.github/pull_request_template.md`, or `.github/ISSUE_TEMPLATE/**`. QA reviews the documentation and its consistency; tests are not required. Any other changed file means the PR is not docs-only.
+- A PR is docs-only only if every changed file matches `*.md`, `.github/agents/**`, `.github/copilot-instructions.md`, `.github/PULL_REQUEST_TEMPLATE/pull_request_template.md`, or `.github/ISSUE_TEMPLATE/**`. QA reviews the documentation and its consistency; tests are not required. Any other changed file means the PR is not docs-only.
 - Architect may skip a design note for docs-only changes under that exact definition, or for a small, narrowly scoped change touching no public API, database schema/migrations, messaging, security, configuration, dependencies, architecture or cache topology. Every skip is auditable: post an issue comment with `<!-- architect-skipped -->` and `skipped: <reason>`. Otherwise, post the design note. Approval triggers still apply whenever present.
 - For any change under `src/**`, `component-tests/**`, `.github/checkstyle/**`, or `.github/scripts/**`, or to `build.gradle`, `settings.gradle`, `gradle/**`, `Dockerfile`, `docker-compose.yml`, `docker/**`, `Makefile`, `.github/workflows/**`, or `db.migration/**`, QA runs the relevant tests, at minimum `./gradlew build` with JDK 25.
 - For runtime-affecting changes (application source or configuration, runtime dependencies or packaging, database migrations, or Docker/Compose runtime setup; including changes in `src/**`, `db.migration/**`, `Dockerfile`, `docker-compose.yml`, and `docker/**`), QA additionally runs `make build && make up && make component-tests && make sanity-tests && make down`.
