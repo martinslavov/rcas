@@ -1,0 +1,186 @@
+name: Agent Run Records
+
+on:
+  workflow_run:
+    workflows:
+      - Dependabot PR Review
+      - Dependabot QA
+      - Dependabot DoD
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  record:
+    if: startsWith(github.event.workflow_run.head_branch, 'dependabot/github_actions/')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      checks: read
+      pull-requests: read
+      issues: write
+    steps:
+      - name: Record completed agent run
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const configs = {
+              'Dependabot PR Review': {
+                agent: 'pr-review-agent',
+                check: 'PR Review',
+                failureSource: 'implementation'
+              },
+              'Dependabot QA': {
+                agent: 'senior-qa-engineer',
+                check: 'QA Agent',
+                failureSource: 'tests'
+              },
+              'Dependabot DoD': {
+                agent: 'dod-validator-agent',
+                check: 'Definition of Done',
+                failureSource: 'tests'
+              }
+            };
+            const config = configs[run.name];
+            if (!config) {
+              core.warning('No matching agent workflow; nothing to record.');
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+            let linkedPr = run.pull_requests?.find(candidate => candidate.number);
+            if (!linkedPr) {
+              const candidates = await github.paginate(
+                github.rest.pulls.list,
+                {
+                  owner,
+                  repo,
+                  state: 'all',
+                  head: `${owner}:${run.head_branch}`,
+                  per_page: 100
+                }
+              );
+              linkedPr = candidates.find(candidate =>
+                candidate.user.login === 'dependabot[bot]' &&
+                candidate.base.ref === 'main' &&
+                candidate.head.sha === run.head_sha
+              ) || candidates.find(candidate =>
+                candidate.user.login === 'dependabot[bot]' &&
+                candidate.base.ref === 'main'
+              );
+            }
+            if (!linkedPr?.number) {
+              core.warning('No associated Dependabot pull request; nothing to record.');
+              return;
+            }
+
+            const pr = (await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: linkedPr.number
+            })).data;
+            if (pr.user.login !== 'dependabot[bot]' ||
+                pr.base.ref !== 'main') {
+              core.warning('The completed run is not for a Dependabot PR targeting main.');
+              return;
+            }
+            const linkedIssue = pr.body?.match(/^\*\*Tracking issue:\*\*\s*#(\d+)/im)?.[1] ||
+              pr.body?.match(/\b(?:closes|fixes|resolves)\s+#(\d+)\b/i)?.[1];
+            if (!linkedIssue) {
+              core.warning('The PR has no linked tracking issue; no agent-run record was posted.');
+              return;
+            }
+
+            const jobs = await github.paginate(
+              github.rest.actions.listJobsForWorkflowRun,
+              { owner, repo, run_id: run.id, per_page: 100 }
+            );
+            const agentJob = jobs.find(job =>
+              job.name.toLowerCase() === 'agent'
+            );
+            if (!agentJob || agentJob.conclusion === 'skipped') {
+              core.info('The agent job was skipped; no agent-run record is needed.');
+              return;
+            }
+
+            const checkRuns = await github.paginate(github.rest.checks.listForRef, {
+              owner,
+              repo,
+              ref: run.head_sha,
+              per_page: 100
+            });
+            const runCreatedAt = Date.parse(run.created_at);
+            const runCompletedAt = Date.parse(run.updated_at);
+            const matchingChecks = checkRuns
+              .filter(check =>
+                check.name === config.check &&
+                Date.parse(check.created_at) >= runCreatedAt &&
+                Date.parse(check.created_at) <= runCompletedAt
+              )
+              .sort((a, b) =>
+                Date.parse(a.started_at || a.created_at) -
+                Date.parse(b.started_at || b.created_at)
+              );
+            const result = matchingChecks.at(-1);
+            const failedCheck = result?.status === 'completed' &&
+              result.conclusion !== 'success';
+            const succeeded = agentJob.conclusion === 'success' &&
+              result?.status === 'completed' &&
+              result.conclusion === 'success';
+            const status = succeeded ? 'success' : 'failure';
+            const failureSource = succeeded
+              ? null
+              : failedCheck
+                ? config.failureSource
+                : 'infrastructure';
+            const startDate = new Date(
+              agentJob.started_at || run.run_started_at || run.created_at
+            );
+            const endDate = new Date(
+              agentJob.completed_at || run.updated_at || run.created_at
+            );
+            const start = startDate.toISOString();
+            const end = endDate.toISOString();
+            const duration = Math.max(0, Math.floor(
+              (endDate.getTime() - startDate.getTime()) / 1000
+            ));
+            const record = {
+              v: 1,
+              agent: config.agent,
+              issue: Number(linkedIssue),
+              pr: linkedPr.number,
+              sha: run.head_sha,
+              start,
+              end,
+              duration_s: duration,
+              checks_failed: failedCheck ? [config.check] : [],
+              retries: 0,
+              status,
+              failure_source: failureSource
+            };
+            const marker = `<!-- agent-run: ${JSON.stringify(record)} -->`;
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner,
+                repo,
+                issue_number: linkedPr.number,
+                per_page: 100
+              }
+            );
+            const duplicate = comments.some(comment =>
+              comment.body?.includes(marker)
+            );
+            if (duplicate) {
+              core.info('This agent-run record already exists.');
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: linkedPr.number,
+              body: marker
+            });
+            core.info(`Recorded ${config.agent} run for ${config.check}.`);
