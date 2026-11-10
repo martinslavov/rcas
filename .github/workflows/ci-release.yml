@@ -120,7 +120,7 @@ jobs:
           EXPECTED_COMMIT: ${{ needs.resolve.outputs.commit }}
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-image-context
           path: ${{ runner.temp }}/release-image-context
@@ -307,7 +307,7 @@ jobs:
       contents: write
     steps:
       - name: Download release jar
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-image-context
           path: ${{ runner.temp }}/release-image-context

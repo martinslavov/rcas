@@ -1,0 +1,97 @@
+# Side-effect-free round trip of the release-image-context artifact contract used by ci-release.yml
+# (producer job `build`, consumers `publish` and `release`). A generated fixture is packed like the
+# release producer, uploaded with the same upload-artifact pin, downloaded with the same download-artifact
+# pin and restored with the same tar command, then path, listing, content and digest are verified.
+# It never calls ci-release.yml, uses tags, logs in to registries, publishes images, edits releases or prunes;
+# the 1-day artifact expires natively and artifact names are scoped to this workflow run.
+name: CI Artifact Round Trip
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ci-release.yml
+      - .github/workflows/ci-artifact-roundtrip.yml
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-artifact-roundtrip-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      archive-sha256: ${{ steps.fixture.outputs.archive-sha256 }}
+      jar-sha256: ${{ steps.fixture.outputs.jar-sha256 }}
+      class-sha256: ${{ steps.fixture.outputs.class-sha256 }}
+    steps:
+      - name: Create and package fixture like the release producer
+        id: fixture
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          mkdir -p fixture/build/libs fixture/build/healthcheck
+          cd fixture
+          printf 'rcas release-image-context round-trip jar fixture\n' > build/libs/rcas-0.0.0-roundtrip.jar
+          printf '\xca\xfe\xba\xbe round-trip HealthCheck fixture\n' > build/healthcheck/HealthCheck.class
+          jar_count=$(find build/libs -maxdepth 1 -type f -name 'rcas-*.jar' | wc -l | tr -d '[:space:]')
+          [ "$jar_count" -eq 1 ] && [ -f build/healthcheck/HealthCheck.class ] || { echo "::error::Expected exactly one boot jar and HealthCheck.class" >&2; exit 1; }
+          jar=$(find build/libs -maxdepth 1 -type f -name 'rcas-*.jar' -print -quit)
+          tar -czf release-image-context.tar.gz "$jar" build/healthcheck/HealthCheck.class
+          {
+            echo "archive-sha256=$(sha256sum release-image-context.tar.gz | cut -d' ' -f1)"
+            echo "jar-sha256=$(sha256sum "$jar" | cut -d' ' -f1)"
+            echo "class-sha256=$(sha256sum build/healthcheck/HealthCheck.class | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-image-context
+          path: ${{ runner.temp }}/fixture/release-image-context.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  download:
+    needs: upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Verify download destination is empty
+        run: test ! -e "$RUNNER_TEMP/release-image-context"
+      - name: Download build artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-image-context
+          path: ${{ runner.temp }}/release-image-context
+      - name: Verify downloaded archive path and digest
+        env:
+          ARCHIVE_SHA256: ${{ needs.upload.outputs.archive-sha256 }}
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/release-image-context"
+          archive="$dest/release-image-context.tar.gz"
+          [ -f "$archive" ] || { echo "::error::Missing $archive" >&2; exit 1; }
+          [ "$(find "$dest" -mindepth 1 | wc -l | tr -d '[:space:]')" -eq 1 ] || { echo "::error::Unexpected extra downloaded files" >&2; find "$dest" >&2; exit 1; }
+          echo "$ARCHIVE_SHA256  $archive" | sha256sum -c -
+      - name: Verify archive listing
+        run: |
+          set -euo pipefail
+          printf '%s\n' build/healthcheck/HealthCheck.class build/libs/rcas-0.0.0-roundtrip.jar > "$RUNNER_TEMP/expected-listing"
+          tar -tzf "$RUNNER_TEMP/release-image-context/release-image-context.tar.gz" | sort > "$RUNNER_TEMP/actual-listing"
+          diff -u "$RUNNER_TEMP/expected-listing" "$RUNNER_TEMP/actual-listing"
+      - name: Restore jar and health-check class
+        run: tar -xzf "$RUNNER_TEMP/release-image-context/release-image-context.tar.gz"
+      - name: Verify restored content
+        env:
+          JAR_SHA256: ${{ needs.upload.outputs.jar-sha256 }}
+          CLASS_SHA256: ${{ needs.upload.outputs.class-sha256 }}
+        run: |
+          set -euo pipefail
+          jar_count=$(find build/libs -maxdepth 1 -type f -name 'rcas-*.jar' | wc -l | tr -d '[:space:]')
+          [ "$jar_count" -eq 1 ] && [ -f build/healthcheck/HealthCheck.class ] || { echo "::error::Build artifacts are incomplete" >&2; exit 1; }
+          printf '%s  %s\n' "$JAR_SHA256" build/libs/rcas-0.0.0-roundtrip.jar "$CLASS_SHA256" build/healthcheck/HealthCheck.class | sha256sum -c -
