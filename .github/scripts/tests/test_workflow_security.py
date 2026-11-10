@@ -314,6 +314,51 @@ class WorkflowSecurityTest(unittest.TestCase):
                 self.assertIn(operation, steps[tracking])
         self.assertIn("secrets.PROJECT_TOKEN", steps[board])
 
+    def test_dependabot_agent_gates_are_chained_with_exact_check_names(self):
+        gates = {
+            "dependabot-pr-review.md": "PR Review",
+            "dependabot-qa.md": "QA Agent",
+            "dependabot-dod.md": "Definition of Done",
+        }
+        for name, check in gates.items():
+            with self.subTest(workflow=name):
+                text = (ROOT / "workflows" / name).read_text(encoding="utf-8")
+                self.assertIn(f"create-check-run:\n    name: {check}\n", text)
+                self.assertIn("max-ai-credits: 25", text)
+        review = (ROOT / "workflows" / "dependabot-pr-review.md").read_text(encoding="utf-8")
+        qa = (ROOT / "workflows" / "dependabot-qa.md").read_text(encoding="utf-8")
+        dod = (ROOT / "workflows" / "dependabot-dod.md").read_text(encoding="utf-8")
+        self.assertIn('bots: ["dependabot[bot]"]', review)
+        self.assertIn("      - Dependabot PR Review\n", qa)
+        self.assertIn("workflows: [Dependabot QA]", dod)
+
+    def test_dependabot_agent_gates_cannot_merge_or_write_directly(self):
+        for name in ("dependabot-pr-review", "dependabot-qa", "dependabot-dod"):
+            with self.subTest(workflow=name):
+                source = (ROOT / "workflows" / f"{name}.md").read_text(encoding="utf-8")
+                frontmatter = source.split("---", 2)[1]
+                self.assertRegex(frontmatter, r"(?m)^  contents: read$")
+                self.assertNotRegex(frontmatter, r"(?m)^  (contents|pull-requests|issues|checks|statuses): write$")
+                self.assertNotIn("merge-pull-request", frontmatter)
+                self.assertNotIn("statuses:", frontmatter)
+                lock = (ROOT / "workflows" / f"{name}.lock.yml").read_text(encoding="utf-8")
+                self.assertNotIn("gh pr merge", lock)
+                self.assertNotIn("pulls.merge", lock)
+
+    def test_agent_run_records_workflow_is_trusted_and_least_privileged(self):
+        text = (ROOT / "workflows" / "ci-agent-run-records.yml").read_text(encoding="utf-8")
+        self.assertIn("permissions: {}", text)
+        job = _jobs(text)["record"]
+        self.assertIn("startsWith(github.event.workflow_run.head_branch, 'dependabot/github_actions/')", job)
+        for scope in ("actions: read", "checks: read", "pull-requests: read", "issues: write"):
+            self.assertIn(scope, job)
+        self.assertNotIn("contents:", job)
+        self.assertNotIn("actions/checkout", text)
+        self.assertIn("This agent-run record already exists.", job)
+        self.assertIn("<!-- agent-run: ${JSON.stringify(record)} -->", job)
+        self.assertIn("failure_source: failureSource", job)
+        self.assertIn("status = succeeded ? 'success' : 'failure'", job)
+
 
 if __name__ == "__main__":
     unittest.main()
