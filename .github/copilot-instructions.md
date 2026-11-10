@@ -212,6 +212,8 @@ The exact marker shape is `<!-- agent-run: {"v":1,"agent":"<agent-id>","issue":6
 Failure source means: `po` for unclear, missing or changed acceptance criteria; `implementation` for code/design defects;
 `tests` for failing or missing tests/evidence; and `infrastructure` for runner, Docker, network or GitHub outages. The
 dashboard deduplicates exact replays using `(agent, issue, pr, sha, start, end)`; timestamps make legitimate reruns distinct.
+Exception: the Dependabot PR Review, QA, and DoD Agentic Workflows must not post their own records; the trusted
+`.github/workflows/ci-agent-run-records.yml` workflow records those runs centrally after completion.
 The dashboard is a derived view from all issue/PR comments and can be regenerated. It updates exactly the issue numbered by the Actions variable
 `AGENT_DASHBOARD_ISSUE` (verified to contain `<!-- agent-dashboard -->`; the workflow never creates one, `--create` is one-time bootstrap); this issue must not be added to the task board. If the workflow log warns that its token cannot
 pin the issue, an owner must pin it once with `gh issue pin <dashboard-issue-number> -R martinslavov/rcas`.
