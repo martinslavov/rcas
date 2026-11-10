@@ -7,6 +7,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[3] / ".github"
 WORKFLOWS = sorted((ROOT / "workflows").glob("*.yml"))
 PINNED = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40} # v\d+(\.\d+)*\S*$")
 DOCKER_LOGIN_WORKFLOWS = ("ci-component-tests.yml", "ci-sanity-tests.yml")
+DOWNLOAD_ARTIFACT_V8 = "9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2"
+UPLOAD_ARTIFACT_V7 = "cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2"
 
 
 def _steps(text):
@@ -151,6 +153,42 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertIn('gh api -X DELETE "repos/$REPO/git/refs/tags/$tag"', text)
         self.assertIn('gh api -X DELETE "user/packages/container/rcas/versions/$id"', text)
         self.assertIn("retaining all releases and tags", text)
+
+    def test_release_download_artifact_consumers_are_pinned_to_v8_0_2(self):
+        jobs = _jobs((ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8"))
+        for job in ("publish", "release"):
+            with self.subTest(job=job):
+                self.assertEqual(jobs[job].count(f"actions/download-artifact@{DOWNLOAD_ARTIFACT_V8}"), 1)
+                self.assertIn("path: ${{ runner.temp }}/release-image-context", jobs[job])
+                self.assertIn('tar -xzf "$RUNNER_TEMP/release-image-context/release-image-context.tar.gz"', jobs[job])
+
+    def test_artifact_round_trip_mirrors_release_contract_without_side_effects(self):
+        text = (ROOT / "workflows" / "ci-artifact-roundtrip.yml").read_text(encoding="utf-8")
+        release = (ROOT / "workflows" / "ci-release.yml").read_text(encoding="utf-8")
+        on_block = text.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertEqual(re.findall(r"(?m)^  (\w+):", on_block), ["pull_request", "workflow_dispatch"])
+        self.assertIn("      - .github/workflows/ci-release.yml\n      - .github/workflows/ci-artifact-roundtrip.yml\n", on_block)
+        jobs = _jobs(text)
+        self.assertEqual(sorted(jobs), ["download", "upload"])
+        for name, job in jobs.items():
+            with self.subTest(job=name):
+                self.assertIn("    permissions: {}\n", job)
+        self.assertIn(f"actions/upload-artifact@{UPLOAD_ARTIFACT_V7}", jobs["upload"])
+        self.assertIn(f"actions/upload-artifact@{UPLOAD_ARTIFACT_V7}", release)
+        self.assertIn(f"actions/download-artifact@{DOWNLOAD_ARTIFACT_V8}", jobs["download"])
+        self.assertIn("name: release-image-context", jobs["upload"])
+        self.assertIn("name: release-image-context", jobs["download"])
+        self.assertIn('tar -czf release-image-context.tar.gz "$jar" build/healthcheck/HealthCheck.class', jobs["upload"])
+        self.assertIn('tar -czf release-image-context.tar.gz "$jar" build/healthcheck/HealthCheck.class', release)
+        self.assertIn("path: ${{ runner.temp }}/release-image-context", jobs["download"])
+        self.assertIn('run: tar -xzf "$RUNNER_TEMP/release-image-context/release-image-context.tar.gz"', jobs["download"])
+        self.assertIn("sha256sum -c -", jobs["download"])
+        self.assertIn("tar -tzf", jobs["download"])
+        for forbidden in ("secrets.", "GITHUB_TOKEN", "GH_TOKEN", "ci-release.yml\n", "uses: ./", "login",
+                          "docker ", "skopeo", "gh release", "gh api", "git tag", "refs/tags", "tags:",
+                          "write", "DELETE", "delete", "prune", "checkout"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, text.split("\nname:", 1)[1].replace("- .github/workflows/ci-release.yml\n", ""))
 
     def test_dockerfile_declares_oci_labels_and_workflow_inspects_each_label(self):
         dockerfile = (ROOT.parent / "Dockerfile").read_text(encoding="utf-8")
