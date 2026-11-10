@@ -118,11 +118,13 @@ class AgentDashboardTests(unittest.TestCase):
             "pr-review-agent", "senior-qa-engineer", "dod-validator-agent",
         }
         files = list((root / ".github/agents").glob("*.agent.md"))
-        found_names = {
+        self.assertEqual(len(agent_names), len(files))
+        found_names = [
             re.search(r"(?m)^name:\s*(\S+)\s*$", path.read_text(encoding="utf-8")).group(1)
             for path in files
-        }
-        self.assertEqual(agent_names, found_names)
+        ]
+        self.assertEqual(len(found_names), len(set(found_names)))
+        self.assertCountEqual(agent_names, found_names)
         for path in files:
             name = re.search(r"(?m)^name:\s*(\S+)\s*$", path.read_text(encoding="utf-8")).group(1)
             with self.subTest(agent=name):
