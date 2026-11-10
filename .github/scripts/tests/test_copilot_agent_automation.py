@@ -1,0 +1,284 @@
+import unittest
+from unittest.mock import patch
+
+from copilot_agent_automation import (
+    Dispatch,
+    ENTRY_LABEL,
+    HUMAN_REVIEW_LABEL,
+    REQUIRED_CHECKS,
+    get_dispatches,
+    merge_if_ready,
+)
+
+
+class FakeGitHub:
+    owner = "martinslavov"
+    name = "rcas"
+    repository = "martinslavov/rcas"
+
+    def __init__(self):
+        self.issue = {"number": 42, "state": "open", "labels": [{"name": ENTRY_LABEL}]}
+        self.pr = {
+            "number": 43,
+            "state": "open",
+            "draft": False,
+            "body": "Closes #42",
+            "base": {"ref": "main"},
+            "head": {
+                "sha": "a" * 40,
+                "ref": "feature/automated-task",
+                "repo": {"full_name": self.repository},
+            },
+            "labels": [],
+        }
+        self.statuses = [
+            {"context": name, "state": "success", "updated_at": "2026-01-01T00:00:00Z"}
+            for name in ("PR Review", "QA Agent", "Definition of Done")
+        ]
+        self.check_runs = [
+            {
+                "name": name,
+                "status": "completed",
+                "conclusion": "success",
+                "completed_at": "2026-01-01T00:00:00Z",
+            }
+            for name in REQUIRED_CHECKS
+            if name not in {"PR Review", "QA Agent"}
+        ]
+        self.comments = [
+            {
+                "body": "<!-- agent-automation-start:1794315503 -->",
+                "user": {"login": self.owner},
+            }
+        ]
+        self.issue_comments = [
+            {
+                "body": "<!-- agent-automation-start:1794315503 -->",
+                "user": {"login": self.owner},
+            }
+        ]
+        self.merged = False
+
+    def pages(self, path):
+        if "/issues?" in path:
+            return [self.issue]
+        if path.endswith("/issues/42/comments"):
+            return self.issue_comments
+        if path.endswith("/pulls") or "/pulls?" in path:
+            return [self.pr]
+        if path.endswith("/comments") or path.endswith("/reviews"):
+            return self.comments
+        return []
+
+    def request(self, method, path, body=None):
+        if path.endswith("/pulls/43") and method == "GET":
+            return self.pr
+        if path.endswith("/issues/42") and method == "GET":
+            return self.issue
+        if path.endswith("/issues/43/labels") and method == "GET":
+            return self.pr["labels"]
+        if path.endswith("/commits/" + "a" * 40 + "/status") and method == "GET":
+            return {"statuses": self.statuses}
+        if "/commits/" + "a" * 40 + "/check-runs?" in path and method == "GET":
+            return {"check_runs": self.check_runs}
+        if path.endswith("/pulls/43/merge") and method == "PUT":
+            self.merged = True
+            return {"merged": True, "message": "Pull Request successfully merged"}
+        if path.endswith("/git/refs/heads/feature/automated-task") and method == "DELETE":
+            return None
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+
+class CopilotDispatchTest(unittest.TestCase):
+    def test_agent_read_label_starts_architect(self):
+        event = {
+            "action": "labeled",
+            "label": {"name": ENTRY_LABEL},
+            "issue": {"number": 42, "state": "open", "labels": []},
+        }
+        self.assertEqual(
+            [Dispatch("issue", 42, "architect-agent")],
+            get_dispatches("issues", event, FakeGitHub()),
+        )
+
+    def test_architecture_note_without_approval_starts_engineer(self):
+        api = FakeGitHub()
+        body = "<!-- architect-design-note -->\nApproval required: no"
+        api.issue_comments.extend(
+            [
+                {"body": Dispatch("issue", 42, "architect-agent").marker, "user": {"login": api.owner}},
+                {"body": body, "user": {"login": "copilot-swe-agent[bot]"}},
+            ]
+        )
+        event = {
+            "action": "created",
+            "issue": {
+                "number": 42,
+                "state": "open",
+                "labels": [{"name": ENTRY_LABEL}],
+            },
+            "comment": {
+                "body": body,
+                "user": {"login": "copilot-swe-agent[bot]"},
+            },
+        }
+        self.assertEqual(
+            [Dispatch("issue", 42, "senior-java-software-engineer")],
+            get_dispatches("issue_comment", event, api),
+        )
+
+    def test_architecture_approval_must_be_by_repository_owner(self):
+        api = FakeGitHub()
+        note = "<!-- architect-design-note -->\nApproval required: yes"
+        api.issue["labels"].append({"name": "architecture-approval-required"})
+        api.issue_comments.extend(
+            [
+                {"body": Dispatch("issue", 42, "architect-agent").marker, "user": {"login": api.owner}},
+                {"body": note, "user": {"login": "copilot-swe-agent[bot]"}},
+            ]
+        )
+        event = {
+            "action": "created",
+            "issue": {
+                "number": 42,
+                "state": "open",
+                "labels": [
+                    {"name": ENTRY_LABEL},
+                    {"name": "architecture-approval-required"},
+                ],
+            },
+            "comment": {
+                "body": (
+                    "<!-- architecture-approved --> "
+                    "Approved by @martinslavov at 2026-11-10T12:00:00Z"
+                ),
+                "user": {"login": "someone-else"},
+            },
+        }
+        self.assertEqual([], get_dispatches("issue_comment", event, api))
+        event["comment"]["user"]["login"] = api.owner
+        api.issue_comments.append(event["comment"])
+        self.assertEqual(
+            [Dispatch("issue", 42, "senior-java-software-engineer")],
+            get_dispatches("issue_comment", event, api),
+        )
+
+    def test_review_success_dispatches_qa_for_current_agent_pr(self):
+        api = FakeGitHub()
+        event = {"context": "PR Review", "state": "success", "sha": "a" * 40}
+        self.assertEqual(
+            [Dispatch("pull", 43, "senior-qa-engineer", "a" * 40)],
+            get_dispatches("status", event, api),
+        )
+
+    def test_stale_status_does_not_dispatch_for_newer_head(self):
+        api = FakeGitHub()
+        api.pr["head"]["sha"] = "b" * 40
+        event = {"context": "PR Review", "state": "success", "sha": "a" * 40}
+        self.assertEqual([], get_dispatches("status", event, api))
+
+    def test_round_five_failure_waits_for_human_review(self):
+        api = FakeGitHub()
+        api.comments = [{"body": "<!-- qa-round:5 -->", "user": {"login": api.owner}}]
+        event = {"context": "QA Agent", "state": "failure", "sha": "a" * 40}
+        self.assertEqual([], get_dispatches("status", event, api))
+
+    def test_failed_required_ci_check_dispatches_engineer(self):
+        api = FakeGitHub()
+        api.check_runs[0]["conclusion"] = "failure"
+        event = {
+            "action": "completed",
+            "check_suite": {"head_sha": "a" * 40, "conclusion": "failure"},
+        }
+        self.assertEqual(
+            [Dispatch("pull", 43, "senior-java-software-engineer", "a" * 40)],
+            get_dispatches("check_suite", event, api),
+        )
+
+    def test_removing_human_review_label_resumes_engineer_once(self):
+        api = FakeGitHub()
+        api.statuses[0]["state"] = "failure"
+        event = {
+            "action": "unlabeled",
+            "label": {"name": HUMAN_REVIEW_LABEL},
+            "issue": {"number": 43, "pull_request": {}, "labels": []},
+        }
+        self.assertEqual(
+            [
+                Dispatch(
+                    "pull",
+                    43,
+                    "senior-java-software-engineer",
+                    "a" * 40,
+                    resume=True,
+                )
+            ],
+            get_dispatches("issues", event, api),
+        )
+
+    def test_schedule_dispatches_next_agent_from_current_head_statuses(self):
+        api = FakeGitHub()
+        api.issue_comments.extend(
+            [
+                {"body": Dispatch("issue", 42, "architect-agent").marker},
+                {"body": Dispatch("issue", 42, "senior-java-software-engineer").marker},
+            ]
+        )
+        next(item for item in api.statuses if item["context"] == "QA Agent")["state"] = "pending"
+        self.assertEqual(
+            [Dispatch("pull", 43, "senior-qa-engineer", "a" * 40)],
+            get_dispatches("schedule", {}, api),
+        )
+
+    def test_schedule_recovers_architect_dispatch_for_labeled_issue(self):
+        api = FakeGitHub()
+        self.assertEqual(
+            [Dispatch("issue", 42, "architect-agent")],
+            get_dispatches("schedule", {}, api),
+        )
+
+
+class AutoMergeTest(unittest.TestCase):
+    def test_merges_only_when_checks_statuses_and_comments_are_clear(self):
+        api = FakeGitHub()
+        with patch("copilot_agent_automation.subprocess.run") as run:
+            self.assertTrue(merge_if_ready(api, 43))
+        self.assertEqual(
+            [
+                "bash",
+                ".github/scripts/post_task_elapsed.sh",
+                "42",
+                "43",
+                "1794315503",
+            ],
+            run.call_args.args[0],
+        )
+        self.assertTrue(api.merged)
+
+    def test_missing_definition_of_done_blocks_merge(self):
+        api = FakeGitHub()
+        api.statuses = [item for item in api.statuses if item["context"] != "Definition of Done"]
+        self.assertFalse(merge_if_ready(api, 43))
+        self.assertFalse(api.merged)
+
+    def test_failed_required_check_blocks_merge(self):
+        api = FakeGitHub()
+        api.check_runs[0]["conclusion"] = "failure"
+        self.assertFalse(merge_if_ready(api, 43))
+        self.assertFalse(api.merged)
+
+    def test_human_comment_blocks_merge(self):
+        api = FakeGitHub()
+        api.comments = [{"body": "Please review this behavior", "user": {"login": api.owner}}]
+        self.assertFalse(merge_if_ready(api, 43))
+        self.assertFalse(api.merged)
+
+    def test_human_review_label_blocks_merge(self):
+        api = FakeGitHub()
+        api.pr["labels"] = [{"name": HUMAN_REVIEW_LABEL}]
+        self.assertFalse(merge_if_ready(api, 43))
+        self.assertFalse(api.merged)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -20,6 +20,15 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
   (for example `RUN-QUEUE`), run `task_queue.sh list` and process items one at a time, oldest first. For a queued issue the
   Product Owner step is already done: the Architect starts it with `todo → architecture` using its own agent id. Merging
   projects the item to `Done`. For queued issues, elapsed time starts when picked up from `TODO`.
+- For an issue that is ready for autonomous work, add the `agent-read` label. The Copilot cloud-agent workflow starts
+  `architect-agent` first; it starts the Engineer only after an auditable skip/design note says approval is not required,
+  or after the repository owner posts `<!-- architecture-approved -->` for an issue labelled
+  `architecture-approval-required`. The PR then proceeds through PR Review → QA → DoD. A failed stage returns to the
+  Engineer, and `needs-human-review` stops dispatch until a human removes that label. A separate merge gate merges only
+  agent-read PRs whose required checks and all three agent statuses, including Definition of Done, succeed on the current
+  head SHA, with no human PR comments/reviews. Dispatch and merge gates poll every five minutes while checks/statuses are
+  pending.
+  Setup and token permissions are documented in `.github/docs/agent-automation.md` and `.github/docs/security.md`.
 - **EPICs** group related sub-issues (GitHub sub-issues) and carry the `epic` label. Move an EPIC to `In Progress` when it is
   created; it is never processed from the queue itself and has no branch or PR. Its sub-issues are normal tasks (usually created
   in `Backlog` and moved to `TODO` when ready, respecting dependencies listed in the EPIC). Close the EPIC when all sub-issues
