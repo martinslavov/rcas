@@ -6,6 +6,8 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[3] / ".github"
 WORKFLOWS = sorted((ROOT / "workflows").glob("*.yml"))
 PINNED = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40} # v\d+(\.\d+)*\S*$")
+# Chained Dependabot agent gates and their trusted run-record writer; they never check out or run PR code.
+WORKFLOW_RUN_ALLOWED = ("dependabot-qa.lock.yml", "dependabot-dod.lock.yml", "ci-agent-run-records.yml")
 DOCKER_LOGIN_WORKFLOWS = ("ci-component-tests.yml", "ci-sanity-tests.yml")
 
 
@@ -52,7 +54,8 @@ class WorkflowSecurityTest(unittest.TestCase):
             with self.subTest(workflow=path.name):
                 text = path.read_text(encoding="utf-8")
                 self.assertNotIn("pull_request_target", text)
-                self.assertNotIn("workflow_run", text)
+                if path.name not in WORKFLOW_RUN_ALLOWED:
+                    self.assertNotIn("workflow_run", text)
 
     def test_registry_logout_happens_before_pr_code_runs(self):
         for name in DOCKER_LOGIN_WORKFLOWS:
