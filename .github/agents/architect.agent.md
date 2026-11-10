@@ -54,7 +54,7 @@ and document designs; you never edit application or repository files.
 Skip the design note for either of these cases:
 
 - **Docs-only:** every changed file matches `*.md`, `.github/agents/**`, `.github/copilot-instructions.md`,
-  `.github/pull_request_template.md` or `.github/ISSUE_TEMPLATE/**` (the same docs-only scope used by QA).
+  `.github/PULL_REQUEST_TEMPLATE/pull_request_template.md` or `.github/ISSUE_TEMPLATE/**` (the same docs-only scope used by QA).
 - **Small change:** a narrowly scoped change that touches no public API, database schema or migrations, messaging,
   security, configuration or dependencies, and does not alter architecture or cache topology.
 

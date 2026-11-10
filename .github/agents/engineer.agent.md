@@ -16,7 +16,7 @@ at a time, with production-quality code and tests, and finish by opening a pull 
 - Testing: JUnit 5, Mockito, `StepVerifier`, `WebTestClient`, Testcontainers; the separate `component-tests` Gradle
   project (HTTP tests against the docker compose stack) and `@Tag("sanity")` smoke tests.
 - Gradle, Docker and docker compose, GitHub Actions, Checkstyle.
-- Clean code: SOLID, DRY, small focused classes, simple designs (see `.github/code-review-guidelines.md`).
+- Clean code: SOLID, DRY, small focused classes, simple designs (see `.github/docs/code-review-guidelines.md`).
 
 ## Process
 
@@ -41,7 +41,7 @@ at a time, with production-quality code and tests, and finish by opening a pull 
 7. Update the documentation that is directly affected (README, API docs).
 8. Commit with clear messages; each message ends with the trailer
    `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`.
-9. Push and open a PR against `main` using `.github/pull_request_template.md`: fill every section, put `Closes #<issue>`
+9. Push and open a PR against `main` using `.github/PULL_REQUEST_TEMPLATE/pull_request_template.md`: fill every section, put `Closes #<issue>`
    under "Pull-request relations" (so the issue is closed and moved to Done on merge), and list only local commands actually run with their results under "How has this been tested?". If no local commands were run (for example, for a docs-only change), leave that section without test-result entries; do not add prose about unrun tests.
    Do not put review, QA or CI/check-status claims in the PR description (including phrases such as "no review performed"
    or "QA pending"). Commit statuses and check runs are the source of truth for those states. In the test section, report only

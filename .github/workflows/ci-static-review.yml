@@ -1,5 +1,5 @@
 # Automatic static code review: runs Checkstyle (.github/checkstyle/checkstyle.xml, derived from
-# .github/code-review-guidelines.md) on every pull request. Violations fail the check.
+# .github/docs/code-review-guidelines.md) on every pull request. Violations fail the check.
 name: CI Static Review
 
 on:

@@ -1,6 +1,7 @@
 import datetime as dt
 import json
 import pathlib
+import re
 import unittest
 
 from agent_dashboard import (
@@ -109,14 +110,21 @@ class AgentDashboardTests(unittest.TestCase):
         self.assertIn("| **Total classified failures** | 0 | 0.0% |", markdown)
 
     def test_every_agent_documents_run_record_posting(self):
+        # Agent file names are a short, stable slug (e.g. "architect.agent.md") decoupled from the
+        # agent id posted in run records, which lives in the frontmatter "name:" field instead.
         root = pathlib.Path(__file__).resolve().parents[3]
         agent_names = {
             "product-owner-agent", "architect-agent", "senior-java-software-engineer",
             "pr-review-agent", "senior-qa-engineer", "dod-validator-agent",
         }
-        files = {path.stem.removesuffix(".agent"): path for path in (root / ".github/agents").glob("*.agent.md")}
-        self.assertEqual(agent_names, set(files))
-        for name, path in files.items():
+        files = list((root / ".github/agents").glob("*.agent.md"))
+        found_names = {
+            re.search(r"(?m)^name:\s*(\S+)\s*$", path.read_text(encoding="utf-8")).group(1)
+            for path in files
+        }
+        self.assertEqual(agent_names, found_names)
+        for path in files:
+            name = re.search(r"(?m)^name:\s*(\S+)\s*$", path.read_text(encoding="utf-8")).group(1)
             with self.subTest(agent=name):
                 content = path.read_text(encoding="utf-8")
                 self.assertIn("agent-run:", content)

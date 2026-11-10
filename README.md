@@ -204,7 +204,7 @@ Workflows live in `.github/workflows`:
 | `ci-unit-tests.yml` (CI Unit Tests) | pull request, push to `main`, manual | `./gradlew build` on JDK 25: compiles, runs unit and integration tests, uploads the test report and the JaCoCo `coverage-report`; `check` fails when LINE or BRANCH coverage drops below the minimums in `build.gradle` (45 % / 15 %; run `./gradlew jacocoTestReport`, report in `build/reports/jacoco/test/`) |
 | `ci-component-tests.yml` (CI Component Tests) | pull request, push to `main`, manual | Builds the image, starts the stack with docker compose (`make up`), runs the component tests, collects the logs and tears everything down (`make down`) |
 | `ci-sanity-tests.yml` (CI Sanity Tests) | pull request, push to `main`, manual | Starts the stack with docker compose and runs only the fast sanity tests (`make sanity-tests`) |
-| `ci-static-review.yml` (CI Static Review) | pull request | Automatic static code review with Checkstyle (`.github/checkstyle/checkstyle.xml`, derived from `.github/code-review-guidelines.md`); run locally with `./gradlew checkstyleMain checkstyleTest` |
+| `ci-static-review.yml` (CI Static Review) | pull request | Automatic static code review with Checkstyle (`.github/checkstyle/checkstyle.xml`, derived from `.github/docs/code-review-guidelines.md`); run locally with `./gradlew checkstyleMain checkstyleTest` |
 | `ci-dependency-review.yml` (CI Dependency Review) | pull request | `dependency-review` job: fails the PR when it adds dependencies with known high or critical vulnerabilities |
 | `ci-secret-scan.yml` (CI Secret Scan) | pull request, push to `main` | `secret-scan` job: gitleaks over the full history (`.gitleaks.toml`, allowlist entries need a documented reason) |
 | `ci-tag.yml` (CI Tag) | merged PR into `main`; push fallback for fork PRs | Plans the tag in a read-only job from the `major` / `enhancement` labels, creates it in a minimal write job without checkout, then calls CI Release |
@@ -351,7 +351,7 @@ commands). Check `copilot --help` for the flags of your version. The GitHub rule
 
 ### QA test scope and status
 
-- A PR is docs-only only if every changed file matches `*.md`, `.github/agents/**`, `.github/copilot-instructions.md`, `.github/pull_request_template.md`, or `.github/ISSUE_TEMPLATE/**`. QA reviews the documentation and its consistency; tests are not required. Any other changed file means the PR is not docs-only.
+- A PR is docs-only only if every changed file matches `*.md`, `.github/agents/**`, `.github/copilot-instructions.md`, `.github/PULL_REQUEST_TEMPLATE/pull_request_template.md`, or `.github/ISSUE_TEMPLATE/**`. QA reviews the documentation and its consistency; tests are not required. Any other changed file means the PR is not docs-only.
 - For any change under `src/**`, `component-tests/**`, `.github/checkstyle/**`, or `.github/scripts/**`, or to `build.gradle`, `settings.gradle`, `gradle/**`, `Dockerfile`, `docker-compose.yml`, `docker/**`, `Makefile`, `.github/workflows/**`, or `db.migration/**`, QA runs the relevant tests, at minimum `./gradlew build` with JDK 25.
 - For runtime-affecting changes (application source or configuration, runtime dependencies or packaging, database migrations, or Docker/Compose runtime setup; including changes in `src/**`, `db.migration/**`, `Dockerfile`, `docker-compose.yml`, and `docker/**`), QA additionally runs `make build && make up && make component-tests && make sanity-tests && make down`.
 - When in doubt, QA runs the tests.

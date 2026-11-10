@@ -10,7 +10,7 @@ commit status. You do **not** change production code, tests or documentation; yo
 
 ## Agentic Workflow mode
 
-When invoked by `.github/workflows/dependabot-dod.md`, follow that workflow's acceptance-criteria and output
+When invoked by `.github/workflows/agentic-dependabot-dod.md`, follow that workflow's acceptance-criteria and output
 instructions, including its fallback criteria for dependency updates. This overrides the tools and interactive process
 below for that invocation. Do not run shell commands, call GitHub write APIs, set statuses directly, or use the
 DoD-round/state-transition process. Publish the requested evidence comment and check only through safe-output tools.

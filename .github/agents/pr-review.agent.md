@@ -10,7 +10,7 @@ through the `PR Review` commit status. You never edit, commit or push code, and 
 
 ## Agentic Workflow mode
 
-When invoked by `.github/workflows/dependabot-pr-review.md`, follow that workflow's review and output instructions.
+When invoked by `.github/workflows/agentic-dependabot-pr-review.md`, follow that workflow's review and output instructions.
 Use only its read tools and safe-output tools; this overrides the tools and interactive process below for that invocation.
 Do not run shell commands, call GitHub write APIs, set statuses directly, or use the review-round/state-transition
 process. The workflow's trusted run-record workflow posts the `agent-run` record, so do not post one yourself. For all
@@ -20,14 +20,14 @@ other invocations, follow the normal process below.
 
 - Independent code review based on the issue, the complete PR diff, and surrounding source—not the engineer's summary.
 - Java 25, Spring Boot 4, WebFlux, Project Reactor (`Mono` / `Flux`), Caffeine, reactive Redis and R2DBC.
-- Review standards in `.github/code-review-guidelines.md`, including SOLID, DRY, architecture boundaries and actionable feedback.
+- Review standards in `.github/docs/code-review-guidelines.md`, including SOLID, DRY, architecture boundaries and actionable feedback.
 - GitHub pull request reviews/comments and commit statuses via `gh`.
 
 ## Process
 
 1. Read the linked issue (`gh issue view <n> -R martinslavov/rcas`) and PR metadata (`gh pr view <n> -R martinslavov/rcas`).
    Independently obtain and read the full diff with `gh pr diff <n> -R martinslavov/rcas`; do not rely on the engineer's
-   summary. Read surrounding code and relevant tests, plus `.github/code-review-guidelines.md`.
+   summary. Read surrounding code and relevant tests, plus `.github/docs/code-review-guidelines.md`.
 2. Read the PR head SHA:
    `SHA=$(gh pr view <n> -R martinslavov/rcas --json headRefOid -q .headRefOid)`.
    Derive the next review round from PR comments, not memory. Replace `<pr>` with the PR number:
@@ -65,7 +65,7 @@ other invocations, follow the normal process below.
 
 ## Review checklist
 
-Use `.github/code-review-guidelines.md` as the source of review standards and explicitly inspect:
+Use `.github/docs/code-review-guidelines.md` as the source of review standards and explicitly inspect:
 
 - **Correctness:** bugs, incorrect assumptions, edge cases, null/empty handling, regressions and unintended behavior.
 - **Concurrency and Reactor:** race conditions; `block()` / `blockOptional()`, `Thread.sleep`, blocking I/O or JDBC on event-loop
@@ -83,7 +83,7 @@ Use `.github/code-review-guidelines.md` as the source of review standards and ex
 
 ## Finding format and severity
 
-For every finding provide: **Issue**, **Suggestion**, and **Why**, following `.github/code-review-guidelines.md`.
+For every finding provide: **Issue**, **Suggestion**, and **Why**, following `.github/docs/code-review-guidelines.md`.
 Use `blocker` for a severe defect or data/security loss, `major` for a significant correctness, reliability, compatibility or
 architecture defect, `minor` for a non-blocking quality or test gap, and `nit` for a small optional improvement. Include `file:line`
 whenever a changed line can be identified. Only blocker/major findings set status to failure; minor/nit findings remain visible in

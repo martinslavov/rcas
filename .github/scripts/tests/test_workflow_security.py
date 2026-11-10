@@ -7,7 +7,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[3] / ".github"
 WORKFLOWS = sorted((ROOT / "workflows").glob("*.yml"))
 PINNED = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40} # v\d+(\.\d+)*\S*$")
 # Chained Dependabot agent gates and their trusted run-record writer; they never check out or run PR code.
-WORKFLOW_RUN_ALLOWED = ("dependabot-qa.lock.yml", "dependabot-dod.lock.yml", "ci-agent-run-records.yml")
+WORKFLOW_RUN_ALLOWED = ("agentic-dependabot-qa.lock.yml", "agentic-dependabot-dod.lock.yml", "ci-agent-run-records.yml")
 DOCKER_LOGIN_WORKFLOWS = ("ci-component-tests.yml", "ci-sanity-tests.yml")
 
 
@@ -316,24 +316,24 @@ class WorkflowSecurityTest(unittest.TestCase):
 
     def test_dependabot_agent_gates_are_chained_with_exact_check_names(self):
         gates = {
-            "dependabot-pr-review.md": "PR Review",
-            "dependabot-qa.md": "QA Agent",
-            "dependabot-dod.md": "Definition of Done",
+            "agentic-dependabot-pr-review.md": "PR Review",
+            "agentic-dependabot-qa.md": "QA Agent",
+            "agentic-dependabot-dod.md": "Definition of Done",
         }
         for name, check in gates.items():
             with self.subTest(workflow=name):
                 text = (ROOT / "workflows" / name).read_text(encoding="utf-8")
                 self.assertIn(f"create-check-run:\n    name: {check}\n", text)
                 self.assertIn("max-ai-credits: 25", text)
-        review = (ROOT / "workflows" / "dependabot-pr-review.md").read_text(encoding="utf-8")
-        qa = (ROOT / "workflows" / "dependabot-qa.md").read_text(encoding="utf-8")
-        dod = (ROOT / "workflows" / "dependabot-dod.md").read_text(encoding="utf-8")
+        review = (ROOT / "workflows" / "agentic-dependabot-pr-review.md").read_text(encoding="utf-8")
+        qa = (ROOT / "workflows" / "agentic-dependabot-qa.md").read_text(encoding="utf-8")
+        dod = (ROOT / "workflows" / "agentic-dependabot-dod.md").read_text(encoding="utf-8")
         self.assertIn('bots: ["dependabot[bot]"]', review)
         self.assertIn("      - Dependabot PR Review\n", qa)
         self.assertIn("workflows: [Dependabot QA]", dod)
 
     def test_dependabot_agent_gates_cannot_merge_or_write_directly(self):
-        for name in ("dependabot-pr-review", "dependabot-qa", "dependabot-dod"):
+        for name in ("agentic-dependabot-pr-review", "agentic-dependabot-qa", "agentic-dependabot-dod"):
             with self.subTest(workflow=name):
                 source = (ROOT / "workflows" / f"{name}.md").read_text(encoding="utf-8")
                 frontmatter = source.split("---", 2)[1]
