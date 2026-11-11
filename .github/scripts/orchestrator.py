@@ -245,6 +245,12 @@ def pr_review_intake_record(
     if (
         state == "pr-review"
         and prior_intake
+        and prior_intake["head_sha"] != head_sha
+    ):
+        raise OrchestratorError("PR Review already started on a different head SHA")
+    if (
+        state == "pr-review"
+        and prior_intake
         and prior_intake.get("pr") == pr_number
         and prior_intake.get("head_sha") == head_sha
     ):

@@ -195,8 +195,8 @@ class OrchestratorStateMachineTests(unittest.TestCase):
             first, 202, "a" * 40, now="2026-10-26T10:00:00Z",
         )
         self.assertEqual(repeated, first)
-        updated = pr_review_intake_record(first, 202, "b" * 40, now="2026-10-26T10:00:00Z")
-        self.assertEqual(updated["head_sha"], "b" * 40)
+        with self.assertRaisesRegex(OrchestratorError, "different head SHA"):
+            pr_review_intake_record(first, 202, "b" * 40, now="2026-10-26T10:00:00Z")
 
     def test_ship_pr_intake_rejects_invalid_states_shas_and_different_prs(self):
         for state in ("backlog", "architecture", "approval-pending", "qa", "done"):

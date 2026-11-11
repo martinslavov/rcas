@@ -304,7 +304,11 @@ def _dispatch_from_pull_request(event: dict[str, Any], api: GitHub) -> list[Disp
     if not isinstance(sha, str):
         return []
     status = api.request("GET", f"/repos/{api.repository}/commits/{sha}/status")
-    if _status_state(status, "PR Review") in {None, "pending"}:
+    review_state = _status_state(status, "PR Review")
+    qa_state = _status_state(status, "QA Agent")
+    if review_state == "success" and qa_state in {None, "pending"}:
+        return [Dispatch("pull", number, "senior-qa-engineer", sha)]
+    if review_state in {None, "pending"}:
         return [Dispatch("pull", number, "pr-review-agent", sha)]
     return []
 
@@ -516,7 +520,7 @@ def _dispatch_from_schedule(api: GitHub) -> list[Dispatch]:
                 if not _failure_round_limit_reached(api, pr["number"], "QA Agent"):
                     result.append(Dispatch("pull", pr["number"], "senior-java-software-engineer", sha))
                 continue
-            if qa_state == "pending":
+            if qa_state in {None, "pending"}:
                 result.append(Dispatch("pull", pr["number"], "senior-qa-engineer", sha))
                 continue
 

@@ -349,6 +349,35 @@ class CopilotDispatchTest(unittest.TestCase):
             get_dispatches("pull_request", event, api),
         )
 
+    def test_agent_read_pr_label_starts_qa_when_review_succeeded_and_qa_status_is_absent(self):
+        api = FakeGitHub()
+        api.statuses = [
+            status for status in api.statuses
+            if status["context"] != "QA Agent"
+        ]
+        event = {
+            "action": "labeled",
+            "label": {"name": ENTRY_LABEL},
+            "pull_request": {"number": 43},
+        }
+        expected = [Dispatch("pull", 43, "senior-qa-engineer", "a" * 40)]
+        self.assertEqual(expected, get_dispatches("pull_request", event, api))
+        api.issue["labels"] = []
+        self.assertEqual(expected, get_dispatches("schedule", {}, api))
+
+    def test_agent_read_pr_label_starts_qa_when_qa_status_is_pending(self):
+        api = FakeGitHub()
+        next(status for status in api.statuses if status["context"] == "QA Agent")["state"] = "pending"
+        event = {
+            "action": "labeled",
+            "label": {"name": ENTRY_LABEL},
+            "pull_request": {"number": 43},
+        }
+        self.assertEqual(
+            [Dispatch("pull", 43, "senior-qa-engineer", "a" * 40)],
+            get_dispatches("pull_request", event, api),
+        )
+
     def test_pr_label_event_requires_open_linked_ship_pr_and_no_human_review(self):
         api = FakeGitHub()
         event = {
