@@ -10,6 +10,8 @@
 
 A read goes through the caches first and only falls back to the database on a miss, so repeated requests are served without hitting PostgreSQL. All layers are non-blocking, which keeps the service responsive under load with a small number of threads.
 
+Cache entries in Caffeine and Redis expire after access. Configure the shared expiration with `cache.expiration.hours` (24 hours by default).
+
 ## Tech stack
 
 - Java 25
