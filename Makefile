@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 HEALTH_TIMEOUT ?= 180
 
-.PHONY: build up down logs component-tests sanity-tests monitoring-up monitoring-down
+.PHONY: build up down logs component-tests sanity-tests monitoring-up monitoring-down startup-service-records-populator
 
 ## Build the artifacts used by the Docker image: the executable jar and the health check class (build/healthcheck)
 build:
@@ -34,3 +34,7 @@ monitoring-up:
 ## Stop the stack including the monitoring services and remove containers, network and volumes
 monitoring-down:
 	$(COMPOSE) --env-file docker/monitoring/monitoring.env --profile app --profile monitoring down -v
+
+## Seed the running PostgreSQL database with the startup service records
+startup-service-records-populator:
+	COMPOSE="$(COMPOSE)" ./scripts/startup-service-records-populator.sh

@@ -127,6 +127,32 @@ make monitoring-up      # RCAS + dependencies + monitoring, OTLP export enabled 
 make monitoring-down    # stop everything and remove volumes
 ```
 
+To populate the running stack with additional predictable records for the user and subscription endpoints, run:
+
+```bash
+make build && make monitoring-up && make startup-service-records-populator
+```
+
+The populator adds users `1000`, `1001` and `1002`; user `1000` has subscriptions `1001`–`1003`, user `1001` has none,
+and user `1002` has subscription `1004`. It is safe to run repeatedly and leaves existing rows unchanged. If you have
+already requested these IDs before seeding, cached empty results may remain visible until the cache entries expire
+(24 hours by default) or the service is restarted. Run the populator before testing the endpoints to avoid stale cache
+entries.
+
+To roll back the added records while keeping the rest of the database, delete subscriptions with the populator types and
+users with the populator usernames from `testdb` (delete subscriptions first). For example:
+
+```bash
+docker compose exec -T postgres psql -U test -d testdb -v ON_ERROR_STOP=1 <<\SQL
+BEGIN;
+DELETE FROM "subscription" WHERE type IN ($p$populator-1001$p$, $p$populator-1002$p$, $p$populator-1003$p$, $p$populator-1004$p$);
+DELETE FROM "user_t" WHERE username IN ($p$populator-user-1000$p$, $p$populator-user-1001$p$, $p$populator-user-1002$p$);
+COMMIT;
+SQL
+```
+
+Alternatively, `make monitoring-down` removes the development stack and its volumes, including all database data.
+
 `make monitoring-up` passes `docker/monitoring/monitoring.env`, which switches RCAS to `log4j2-otel.yaml` (console plus the OpenTelemetry log appender) and enables OTLP trace and log export to the collector (traces are sampled at 100%). Without that file the OTLP export is off, so tests and the default stack need no collector. Configuration lives in `docker/monitoring/`.
 
 Open Grafana at <http://localhost:3000> (Explore, datasource `Loki`, query `{service_name="rcas"}`; or `Prometheus`), Prometheus targets at <http://localhost:9090/targets>.
