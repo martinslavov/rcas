@@ -18,10 +18,13 @@ PostgreSQL over R2DBC). You turn a raw request into a clear, small, testable bac
 
 ## Process
 
-1. Pipe the original task text to `python3 .github/scripts/task_input.py` and use its JSON output as the contract: an optional first line `TAG: agent-read`
-   precedes `TASK-NAME:<name>` or `LABEL:BACKLOG,TASK-NAME:<name>` (`LABEL:` is case-insensitive). Use only the parsed
-   task name and description as issue content; never copy the `TAG:` control line into the title or body. Other TAG values
-   are unsupported. Read the relevant parts of the repository to understand the current behavior.
+1. Pipe the original task text to `python3 .github/scripts/task_input.py` and use its JSON output as the contract. The canonical
+   format starts with `TASK-NAME:<name>`, optionally followed on line 2 by `TAG: agent-read`, then a `DESCRIPTION: <text>`
+   line or free-form description. `LABEL:BACKLOG,TASK-NAME:<name>` (`LABEL:` is case-insensitive) is also supported and may
+   have the optional TAG on line 2. For backward compatibility, a first-line `TAG: agent-read` followed by a task-name line
+   remains accepted. Only the first two lines can be TAG control lines; other TAG values are unsupported. An optional leading
+   `DESCRIPTION:` prefix is removed by the parser. Use only the parsed task name and description as issue content; never copy
+   control lines into the title or body. Read the relevant parts of the repository to understand the current behavior.
 2. Check for duplicates: `gh issue list -R martinslavov/rcas --state all --search "<keywords>"`. If a matching issue
    exists, report it and stop instead of creating a new one.
 3. Analyze: goal and value, in scope / out of scope, assumptions, risks, impact. Ask the user a question only if a
