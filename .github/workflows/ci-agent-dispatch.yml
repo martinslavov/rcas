@@ -1,0 +1,49 @@
+name: Copilot Agent Dispatch
+
+on:
+  issues:
+    types: [labeled, unlabeled]
+  issue_comment:
+    types: [created, edited]
+  status:
+  check_suite:
+    types: [completed]
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions: {}
+
+concurrency:
+  group: copilot-agent-dispatch-${{ github.event.issue.number || github.event.pull_request.number || github.event.sha || github.event.check_suite.head_sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    if: >-
+      github.event_name == 'issues' ||
+      github.event_name == 'issue_comment' ||
+      github.event_name == 'status' ||
+      github.event_name == 'check_suite' ||
+      github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      checks: read
+      statuses: read
+
+    steps:
+      - name: Checkout trusted default-branch automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Dispatch the next Copilot agent stage
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          COPILOT_AGENT_TOKEN: ${{ secrets.COPILOT_AGENT_TOKEN }}
+          MODE: dispatch
+        run: python3 .github/scripts/copilot_agent_automation.py

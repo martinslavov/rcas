@@ -349,6 +349,46 @@ class WorkflowSecurityTest(unittest.TestCase):
                 self.assertIn(operation, steps[tracking])
         self.assertIn("secrets.PROJECT_TOKEN", steps[board])
 
+    def test_agent_dispatch_uses_only_trusted_default_branch_and_scoped_user_token(self):
+        text = (ROOT / "workflows" / "ci-agent-dispatch.yml").read_text(encoding="utf-8")
+        self.assertIn("issues:\n    types: [labeled, unlabeled]", text)
+        self.assertIn("issue_comment:\n    types: [created, edited]", text)
+        self.assertIn("\n  status:\n", text)
+        self.assertIn('cron: "*/5 * * * *"', text)
+        self.assertNotIn("pull_request:", text)
+        self.assertNotIn("pull_request_target", text)
+        self.assertNotIn("workflow_run", text)
+        self.assertIn("permissions: {}", text)
+        self.assertIn("check_suite:\n    types: [completed]", text)
+        job = _jobs(text)["dispatch"]
+        for permission in ("contents: read", "issues: write", "pull-requests: read", "checks: read", "statuses: read"):
+            with self.subTest(permission=permission):
+                self.assertIn(permission, job)
+        self.assertIn("ref: ${{ github.event.repository.default_branch }}", job)
+        self.assertIn("persist-credentials: false", job)
+        self.assertIn("COPILOT_AGENT_TOKEN: ${{ secrets.COPILOT_AGENT_TOKEN }}", job)
+        self.assertNotIn("secrets.COPILOT_AGENT_TOKEN", job.split("- name: Checkout trusted default-branch automation", 1)[0])
+
+    def test_agent_auto_merge_checks_current_head_without_pr_code_or_secret(self):
+        text = (ROOT / "workflows" / "ci-agent-auto-merge.yml").read_text(encoding="utf-8")
+        self.assertIn('cron: "*/5 * * * *"', text)
+        self.assertNotIn("pull_request_target", text)
+        self.assertNotIn("workflow_run", text)
+        self.assertNotIn("secrets.", text)
+        job = _jobs(text)["merge"]
+        for permission in (
+            "contents: write",
+            "issues: write",
+            "pull-requests: write",
+            "checks: read",
+            "statuses: read",
+        ):
+            with self.subTest(permission=permission):
+                self.assertIn(permission, job)
+        self.assertIn("ref: ${{ github.event.repository.default_branch }}", job)
+        self.assertIn("persist-credentials: false", job)
+        self.assertIn("MODE: merge", job)
+
 
 if __name__ == "__main__":
     unittest.main()

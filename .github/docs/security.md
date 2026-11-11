@@ -16,6 +16,8 @@ Every workflow sets `permissions: {}` at the top level; each job declares only t
 | `ci-dependency-review.yml` | `dependency-review` | `contents: read` | none |
 | `ci-code-review.yml` (CodeQL) | `analyze` | `contents: read`, `actions: read`, `security-events: write` | none |
 | `ci-agent-dashboard.yml` | `update-dashboard` | `contents: read`, `pull-requests: read`, `issues: write` | none |
+| `ci-agent-dispatch.yml` | `dispatch` | `contents: read`, `issues: write`, `pull-requests: read`, `checks: read`, `statuses: read` | `COPILOT_AGENT_TOKEN` (agent assignment step only) |
+| `ci-agent-auto-merge.yml` | `merge` | `contents: write`, `issues: write`, `pull-requests: write`, `checks: read`, `statuses: read` | none |
 | `ci-pr-issue-tracking.yml` | `create-issue` | `contents: read`, `issues: write`, `pull-requests: write` | `PROJECT_TOKEN` (board step only) |
 | `ci-pr-issue-close.yml` | `close-issue` | `contents: read`, `issues: write`, `pull-requests: read` | `PROJECT_TOKEN` (board step only) |
 | `ci-issue-board.yml` | `add-to-board` | none (`permissions: {}`) | `PROJECT_TOKEN` |
@@ -52,6 +54,16 @@ copied top-level digest and logs out of both registries, including both Docker H
 `https://index.docker.io/v1/`). `release` runs only after that copy succeeds and updates the top-of-notes Docker image section idempotently;
 existing jar assets are not replaced. `latest` and `dockerhub-latest` independently select the numerically greatest stable
 release and point their registry aliases to that exact manifest.
+
+The agent dispatcher checks out only the trusted default branch and never executes issue or PR content. Its
+`GITHUB_TOKEN` inspects event targets and records bounded CI fix attempts, human-review labels and escalation comments; it uses
+`COPILOT_AGENT_TOKEN` only for the GitHub GraphQL Copilot assignment API, because that API requires a user-to-server token and does not accept the Actions installation token.
+The dispatch token is not passed to the merge workflow.
+Auto-merge checks the current PR head, linked `agent-read` issue, all required status/check contexts plus Definition of
+Done, the `needs-human-review` label, and human PR comments/reviews before calling the merge API. The merge job checks out
+only the default branch and runs no PR-controlled code. It records task elapsed time after merge from the start marker
+written when Architect is dispatched. Both automation workflows poll open agent-read PRs every five minutes so stage
+dispatch and merge do not depend on follow-up events emitted by Actions runs.
 
 The `prune` job has no checkout and runs no repository helper. It first deletes stale Docker Hub tags through the Hub API
 (HTTP 204 and already-absent 404 are accepted); any other response fails closed before GitHub release/tag deletion. It
@@ -120,6 +132,7 @@ Workflows triggered by `pull_request` from a fork get a read-only token and no r
 | Secret | Used by | Minimum scope |
 |--------|---------|---------------|
 | `PROJECT_TOKEN` | `ci-issue-board.yml`, `ci-pr-issue-tracking.yml`, `ci-pr-issue-close.yml` (GraphQL: read the user project `RCAS Tracking`, add items, update the `Status` field) | Fine-grained personal access token owned by the project owner, **user permission "Projects": read and write**; no repository permissions are needed because issue and PR access comes from the job `GITHUB_TOKEN`. Set a short expiry and rotate. |
+| `COPILOT_AGENT_TOKEN` | `ci-agent-dispatch.yml` (assign Copilot cloud agent with a selected custom agent) | User-to-server token for the repository owner with **Metadata: read** and **Actions, Contents, Issues, Pull requests: read and write**. GitHub's Copilot issue-assignment API does not accept `GITHUB_TOKEN`; expose this token only to the dispatch script. Set a short expiry and rotate. |
 | `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` | Component/sanity base-image pulls and `ci-release.yml` `publish` (`dhi.io` only) | Docker Hub access token with **read-only (public repo read)** permission. Never a password or a write-capable token. |
 | `DOCKERHUB_PUSH_TOKEN` | `ci-release.yml` Docker Hub publish, latest and prune steps only | Separate Docker Hub PAT with **Read, Write & Delete** permissions. Required for release output and retention; add this repository secret before enabling releases. Never reuse the read-only `DOCKERHUB_TOKEN`. |
 | `GITHUB_TOKEN` | all workflows | Per job, see the table above. For GHCR, `packages: write` is limited to publication, `latest`, and prune jobs; no personal access token is used. |
