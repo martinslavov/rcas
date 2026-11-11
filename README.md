@@ -259,7 +259,7 @@ Custom agents live in `.github/agents/`:
 | `senior-qa-engineer` | Senior QA Engineer: starts after current-head `PR Review` success, tests the PR, reports bugs and sets `QA Agent` |
 | `dod-validator-agent` | Definition of Done Validator: starts after current-head `QA Agent` success, maps every acceptance criterion to behaviour-verifying evidence, posts the AC → evidence table and sets `Definition of Done`; never changes code |
 
-Reusable procedures such as `/ship-pr` (commit → push → PR → PR Review → QA → DoD → merge) live in `.github/skills/`; see [Skills](.github/docs/skills.md).
+Reusable procedures such as `/ship-pr` (commit → push → PR → PR Review → QA → merge; DoD is manual only and not run by the skill) live in `.github/skills/`; see [Skills](.github/docs/skills.md).
 
 Give a task as `TASK-NAME:<name>` followed by the description for the interactive agent workflow. To start an existing, ready issue
 automatically, add the `agent-read` label: Copilot runs Architect first, waits for required human approval when applicable, then
