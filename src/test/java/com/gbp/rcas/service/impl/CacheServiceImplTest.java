@@ -50,9 +50,11 @@ class CacheServiceImplTest {
     }
 
     @Test
-    void returnsL1HitWithoutReadingRedisOrDatabase() {
+    void refreshesRedisExpirationOnL1HitWithoutReadingRedisOrDatabase() {
         User user = new User.UserBuilder().setId(1L).setUsername("cached-user").createUser();
+        String redisKey = CACHE_NAME_USER + ":1";
         cacheManager.getCache(CACHE_NAME_USER).put(1L, user);
+        when(redisTemplate.expire(redisKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
         AtomicInteger databaseCalls = new AtomicInteger();
 
         Mono<User> result = cacheService.getCache(1L, CACHE_NAME_USER, () -> {
@@ -61,9 +63,33 @@ class CacheServiceImplTest {
         }, User.class);
 
         StepVerifier.create(result).expectNext(user).verifyComplete();
+        StepVerifier.create(result).expectNext(user).verifyComplete();
 
         assertEquals(0, databaseCalls.get());
-        verify(hashOperations, times(0)).get(CACHE_NAME_USER, 1L);
+        verify(hashOperations, times(0)).get(redisKey, 1L);
+        verify(redisTemplate, times(2)).expire(redisKey, CACHE_EXPIRATION);
+    }
+
+    @Test
+    void refreshesRedisExpirationOnSubscriptionListL1HitWithoutReadingRedisOrDatabase() {
+        Long id = -1L;
+        String redisKey = CACHE_NAME_SUBSCRIPTION + ":" + id;
+        Subscription subscription = new Subscription(4L, "premium", 1, 1);
+        cacheManager.getCache(CACHE_NAME_SUBSCRIPTION).put(id, List.of(subscription));
+        when(redisTemplate.expire(redisKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
+        AtomicInteger databaseCalls = new AtomicInteger();
+
+        Flux<Subscription> result = cacheService.getCache(id, CACHE_NAME_SUBSCRIPTION, Subscription.class, () -> {
+            databaseCalls.incrementAndGet();
+            return Flux.empty();
+        });
+
+        StepVerifier.create(result).expectNext(subscription).verifyComplete();
+        StepVerifier.create(result).expectNext(subscription).verifyComplete();
+
+        assertEquals(0, databaseCalls.get());
+        verify(hashOperations, times(0)).get(redisKey, id);
+        verify(redisTemplate, times(2)).expire(redisKey, CACHE_EXPIRATION);
     }
 
     @Test
@@ -84,6 +110,7 @@ class CacheServiceImplTest {
                 .verifyComplete();
 
         verify(hashOperations, times(1)).get(CACHE_NAME_USER + ":2", 2L);
+        verify(redisTemplate, times(2)).expire(CACHE_NAME_USER + ":2", CACHE_EXPIRATION);
     }
 
     @Test

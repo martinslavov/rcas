@@ -47,7 +47,8 @@ public class CacheServiceImpl implements CacheService {
     @Override
     public <T> Mono<T> getCache(Long id, String cacheName, Supplier<Mono<T>> retriever, Class<T> cls) {
         Cache cache = cacheManager.getCache(cacheName);
-        return Mono.defer(() -> Mono.justOrEmpty(cache.get(id, cls)))
+        return Mono.defer(() -> Mono.justOrEmpty(cache.get(id, cls))
+                        .flatMap(value -> refreshRedisExpiration(redisKey(cacheName, id)).thenReturn(value)))
                 .switchIfEmpty(Mono.defer(() -> readFromRedis(id, cacheName, cls)))
                 .switchIfEmpty(Mono.defer(() -> {
                     logger.info("{} was not found in cache by id: {}", cls.getName(), id);
@@ -64,7 +65,9 @@ public class CacheServiceImpl implements CacheService {
         return Mono.defer(() -> {
                     Object cachedValue = cache.get(id, Object.class);
                     if (cachedValue instanceof List<?> values) {
-                        return Mono.just(values.stream().map(cls::cast).toList());
+                        return Mono.just(values.stream().map(cls::cast).toList())
+                                .flatMap(cachedValues -> refreshRedisExpiration(redisKey(cacheName, id))
+                                        .thenReturn(cachedValues));
                     }
                     return Mono.empty();
                 })
