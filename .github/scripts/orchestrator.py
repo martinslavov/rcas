@@ -15,6 +15,10 @@ from typing import Callable, Mapping
 
 OWNER = "martinslavov"
 REPO = "martinslavov/rcas"
+ENTRY_LABEL = "agent-read"
+HUMAN_REVIEW_LABEL = "needs-human-review"
+SHIP_PR_MARKER = "<!-- ship-pr -->"
+PR_REVIEW_INTAKE_ACTION = "ship_pr_intake"
 STATE_MARKER = re.compile(r"<!-- task-state: (\{.*?\}) -->", re.DOTALL)
 APPROVAL_DETAILS = re.compile(r"Approved by @[A-Za-z0-9-]+ at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 
@@ -208,6 +212,59 @@ def transition_record(
     return updated
 
 
+def pr_review_intake_record(
+    record: Mapping,
+    pr_number: int,
+    head_sha: str,
+    now: str | None = None,
+) -> dict:
+    """Record the narrow ship-pr handoff directly into PR Review."""
+    validate_record(record)
+    if type(pr_number) is not int or pr_number < 1:
+        raise OrchestratorError("PR number must be a positive integer")
+    if not isinstance(head_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", head_sha):
+        raise OrchestratorError("PR head SHA must be a 7-64 character hexadecimal SHA")
+
+    state = record["state"]
+    if state not in {"todo", "implementation", "pr-review"}:
+        raise OrchestratorError(f"cannot start PR Review from task state {state!r}")
+    prior_intake = record["actions"].get(PR_REVIEW_INTAKE_ACTION)
+    if prior_intake is not None:
+        if (
+            not isinstance(prior_intake, Mapping)
+            or type(prior_intake.get("pr")) is not int
+            or prior_intake.get("pr") < 1
+            or not isinstance(prior_intake.get("head_sha"), str)
+            or not re.fullmatch(r"[0-9a-fA-F]{7,64}", prior_intake.get("head_sha", ""))
+        ):
+            raise OrchestratorError("existing ship-pr intake metadata is malformed")
+        if prior_intake["pr"] != pr_number:
+            raise OrchestratorError("task state is already linked to a different ship-pr PR")
+    if state == "pr-review" and not prior_intake and record["head_sha"] != head_sha:
+        raise OrchestratorError("PR Review already started on a different head SHA")
+    if (
+        state == "pr-review"
+        and prior_intake
+        and prior_intake.get("pr") == pr_number
+        and prior_intake.get("head_sha") == head_sha
+    ):
+        return deepcopy(dict(record))
+
+    updated = deepcopy(dict(record))
+    updated["state"] = "pr-review"
+    updated["owner_agent"] = STATE_TABLE["pr-review"][0]
+    updated["updated_by"] = "ship-pr"
+    updated["head_sha"] = head_sha
+    updated["updated_at"] = now or utc_now()
+    updated["resume_state"] = None
+    updated["actions"][PR_REVIEW_INTAKE_ACTION] = {
+        "pr": pr_number,
+        "head_sha": head_sha,
+    }
+    validate_record(updated)
+    return updated
+
+
 def _subprocess_runner(args: list[str]) -> str:
     try:
         result = subprocess.run(args, check=True, text=True, capture_output=True)
@@ -342,6 +399,68 @@ class Orchestrator:
         self.project_or_report(issue, target)
         return updated
 
+    def intake_pr_review(self, issue: int, pr_number: int, enable_agent_read: bool, dry_run: bool) -> dict:
+        if issue < 1 or pr_number < 1:
+            raise OrchestratorError("issue and PR numbers must be positive")
+
+        issue_data = json.loads(self.call("gh", "api", f"repos/{REPO}/issues/{issue}"))
+        if issue_data.get("pull_request"):
+            raise OrchestratorError(f"#{issue} is a pull request, not an issue")
+        if issue_data.get("state") != "open":
+            raise OrchestratorError(f"issue #{issue} must be open")
+
+        pr = json.loads(self.call("gh", "api", f"repos/{REPO}/pulls/{pr_number}"))
+        if pr.get("state") != "open" or pr.get("base", {}).get("ref") != "main":
+            raise OrchestratorError(f"PR #{pr_number} must be open and target main")
+        body = pr.get("body") or ""
+        closes_issue = re.search(
+            rf"(?im)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#{issue}\b",
+            body,
+        )
+        if SHIP_PR_MARKER not in body or not closes_issue:
+            raise OrchestratorError(
+                f"PR #{pr_number} must have been created by /ship-pr and close issue #{issue}"
+            )
+        head_sha = (pr.get("head") or {}).get("sha")
+        if not isinstance(head_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", head_sha):
+            raise OrchestratorError(f"PR #{pr_number} has no valid head SHA")
+
+        record, comment_id = self.get_record(issue)
+        issue_labels = {label.get("name") for label in issue_data.get("labels", [])}
+        if record["state"] == "todo" and ENTRY_LABEL in issue_labels:
+            raise OrchestratorError(
+                f"issue #{issue} is opted into Architect/Engineer automation; do not skip it at TODO"
+            )
+        pr_labels = {label.get("name") for label in pr.get("labels", [])}
+        if HUMAN_REVIEW_LABEL in issue_labels or HUMAN_REVIEW_LABEL in pr_labels:
+            raise OrchestratorError("cannot start PR Review while needs-human-review is present")
+        updated = pr_review_intake_record(record, pr_number, head_sha)
+        if dry_run:
+            return updated
+
+        if updated != record:
+            self.write_record(issue, updated, comment_id)
+        self.project_or_report(issue, "pr-review")
+
+        comments = self.get_comments(issue)
+        if not any(re.search(r"<!-- agent-automation-start:\d+ -->", comment.get("body", "")) for comment in comments):
+            self.call(
+                "gh", "api", "-X", "POST", f"repos/{REPO}/issues/{issue}/comments",
+                "-f", f"body=<!-- agent-automation-start:{int(datetime.now(timezone.utc).timestamp())} -->",
+            )
+
+        if ENTRY_LABEL in issue_labels:
+            self.call(
+                "gh", "api", "-X", "DELETE",
+                f"repos/{REPO}/issues/{issue}/labels/{ENTRY_LABEL}",
+            )
+        if enable_agent_read and ENTRY_LABEL not in pr_labels:
+            self.call(
+                "gh", "api", "-X", "POST", f"repos/{REPO}/issues/{pr_number}/labels",
+                "-f", f"labels[]={ENTRY_LABEL}",
+            )
+        return updated
+
 
 def issue_number(value: str) -> int:
     if not re.fullmatch(r"[1-9][0-9]*", value):
@@ -366,6 +485,14 @@ def build_parser() -> argparse.ArgumentParser:
     transition_parser.add_argument("--agent", required=True)
     transition_parser.add_argument("--head-sha")
     transition_parser.add_argument("--dry-run", action="store_true")
+    intake_parser = subparsers.add_parser(
+        "intake-pr-review",
+        help="record a /ship-pr handoff to PR Review without broadening normal transitions",
+    )
+    intake_parser.add_argument("issue", type=issue_number)
+    intake_parser.add_argument("--pr", required=True, type=issue_number)
+    intake_parser.add_argument("--agent-read", action="store_true")
+    intake_parser.add_argument("--dry-run", action="store_true")
     return parser
 
 
@@ -379,6 +506,8 @@ def main(argv: list[str] | None = None, runner: Callable[[list[str]], str] = _su
             record = orchestrator.init(args.issue, args.state, args.agent)
         elif args.command == "reconcile":
             record = orchestrator.reconcile(args.issue)
+        elif args.command == "intake-pr-review":
+            record = orchestrator.intake_pr_review(args.issue, args.pr, args.agent_read, args.dry_run)
         else:
             record = orchestrator.transition(args.issue, args.to, args.agent, args.head_sha, args.dry_run)
         print(json.dumps(record, indent=2, sort_keys=True))

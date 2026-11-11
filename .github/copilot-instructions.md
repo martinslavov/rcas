@@ -1,7 +1,8 @@
 # Task workflow rules
 
 These rules apply when a task starts with a first line `TASK-NAME:<task-name>` (for example `TASK-NAME:code-review-agent` or `TASK-NAME:Code review agent`).
-Tasks without that line are handled normally, without creating an issue, branch or PR.
+Tasks without that line are handled normally, without creating an issue or branch unless needed. PR creation and task-issue
+intake are handled through `/ship-pr`.
 
 ## Task input and queue (Backlog / TODO)
 
@@ -23,7 +24,9 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 - For an issue that is ready for autonomous work, add the `agent-read` label. The Copilot cloud-agent workflow starts
   `architect-agent` first; it starts the Engineer only after an auditable skip/design note says approval is not required,
   or after the repository owner posts `<!-- architecture-approved -->` for an issue labelled
-  `architecture-approval-required`. The PR then proceeds through PR Review → QA. A failed stage returns to the
+  `architecture-approval-required`. The Engineer pushes the implementation branch without opening a PR; the main agent then
+  runs `/ship-pr agent-read`, which records the PR Review intake and puts `agent-read` on the PR (not the issue). The PR then
+  proceeds through PR Review → QA. A failed stage returns to the
   Engineer, and `needs-human-review` stops dispatch until a human removes that label. A separate merge gate merges only
   agent-read PRs whose required checks and the `PR Review` and `QA Agent` statuses succeed on the current
   head SHA, with no human PR comments/reviews. Dispatch and merge gates poll every five minutes while checks/statuses are
@@ -50,7 +53,7 @@ Six custom agents (in `.github/agents/`) do the work:
 
 - `product-owner-agent`: Senior Product Owner, analyzes the task and creates the issue.
 - `architect-agent`: Senior Software Architect, posts a design note or an auditable skip and identifies changes requiring user approval; never changes code.
-- `senior-java-software-engineer`: Senior Java Software Engineer, implements the issue and opens the PR.
+- `senior-java-software-engineer`: Senior Java Software Engineer, implements the issue and pushes the branch. PR creation is handled through `/ship-pr`.
 - `pr-review-agent`: independent PR Reviewer, reviews the complete diff, posts severity-ranked findings and sets `PR Review`.
 - `senior-qa-engineer`: Senior QA Engineer, reviews and tests the PR and sets the `QA Agent` commit status.
 - `dod-validator-agent`: Definition of Done Validator, **manual only**: no workflow, orchestrator stage or other agent starts it; it runs only when the user explicitly asks. Maps every acceptance criterion of the linked issue to
@@ -58,7 +61,7 @@ Six custom agents (in `.github/agents/`) do the work:
   changes code.
 
 When a task has the `TASK-NAME:` line, run them one after the other (the main agent only coordinates). The sequence is
-Product Owner → Architect (design note or skip) → user approval when required → Engineer → PR Review → QA → merge →
+Product Owner → Architect (design note or skip) → user approval when required → Engineer → `/ship-pr` → PR Review → QA → merge →
 elapsed time recorded on the issue and PR:
 
 1. Delegate the whole input to `product-owner-agent`. It returns the issue number, URL and the branch name.
@@ -73,9 +76,12 @@ elapsed time recorded on the issue and PR:
    (endpoints, payloads or status codes), or security (authentication, authorization, secrets, cryptography or
    security-relevant dependencies).
 4. Delegate the issue (number, branch name, Architect comment and original input) to `senior-java-software-engineer` only
-   after the approval gate is satisfied or Architect has documented a skip. It implements the task, opens the PR, and
-   immediately sets `PR Review` and `QA Agent` to `pending` (and the informational `Definition of Done` to `pending` with the description `Manual only - not run by flows`) on the PR head SHA and fills the PR template's
-   "Acceptance criteria → evidence" section.
+   after the approval gate is satisfied or Architect has documented a skip. It implements the task, commits and pushes the
+   branch, then hands it back to the main agent. It must not create a PR. The main agent fetches and checks out that exact
+   branch, then runs `/ship-pr` to create the PR
+   from the template and link the task issue. For an issue labelled `agent-read`, use `/ship-pr agent-read`; the guarded
+   intake records the PR head SHA and starts at PR Review without re-running Architect or Engineer. For the manual path,
+   `/ship-pr` sets the gates to `pending` and the main agent owns the PR template's "Acceptance criteria → evidence" section.
 5. Delegate the PR number to `pr-review-agent`. It independently reads the issue and full diff, posts its findings, and always
    sets a final `PR Review` status on the current head SHA. For `architecture-approval-required` issues, it also verifies
    the implementation against the approved design note; a material deviation is at least `major`, and it requires backward
@@ -94,7 +100,7 @@ elapsed time recorded on the issue and PR:
    `success` only when every criterion is `met`, otherwise `failure` (also `no acceptance criteria` when the issue has none).
    A manual DoD failure is reported to the user and does not dispatch the engineer. Its rounds use `<!-- dod-round:N -->` markers (count per PR, independent of
    the other counters).
-8. Report the issue and PR links, merge status and total elapsed time (see "Elapsed time" below). The engineer merges by default
+8. Report the issue and PR links, merge status and total elapsed time (see "Elapsed time" below). The main agent merges by default
    only when all required checks pass, `PR Review` and `QA Agent` are `success` on the current head SHA, `needs-human-review`
    is absent, and no human comments or unresolved blocker/major findings remain. Resolved findings do not block after the relevant current-head
    status succeeds. Do not merge if the user asks to keep the PR open. After the merge, record the elapsed time on the issue and
@@ -111,17 +117,23 @@ The steps below are what the agents follow:
    derive a short, meaningful slug yourself: lowercase, ASCII letters, digits and `-` only, fixing obvious typos, e.g. `feature/code-review-agent`.
    Only `feature/*` and `hotfix/*` branches can be created.
 3. **Work.** Before creating a branch or implementing, the engineer reads the Architect design note or confirms the skip comment. If `architecture-approval-required` is present, the engineer must find the explicit `<!-- architecture-approved -->` user comment first; otherwise stop without creating a branch or changing files. Commit the changes with clear messages. Never push to `main` directly.
-4. **Pull request.** When done, push the branch and open a PR against `main` using `.github/PULL_REQUEST_TEMPLATE/pull_request_template.md`.
-   Reference the issue from step 1 under "Pull-request relations" as `Closes #N`: GitHub closes it on merge and `PR Issue Close` moves it to Done.
+4. **Pull request.** When implementation is complete, the Engineer pushes the branch and hands it to the main agent. The main
+   agent runs `/ship-pr` to create the PR against `main` using `.github/PULL_REQUEST_TEMPLATE/pull_request_template.md`;
+   `/ship-pr` delegates to `product-owner-agent` to create a Product Owner-style task issue first if no task issue exists.
+   Reference that issue under
+   "Pull-request relations" as `Closes #N`: GitHub closes it on merge and `PR Issue Close` moves it to Done. Include the
+   `<!-- ship-pr -->` marker. The Engineer never runs `gh pr create`.
    The `PR Issue Tracking` workflow adds the tracking issue link to the description. Do not put review, QA or CI/check-status
    claims in the PR description (including "no review performed" or "QA pending"); commit statuses and check runs are the
    source of truth. The testing section may list only local commands actually run and their results; if none were run, leave it without test-result entries rather than adding prose about unrun tests. Required checks (unit, component and sanity tests and
-   all agent statuses) must pass before merging. Right after opening the PR, and after every new push, the engineer sets the agent
-   gates to pending (`Definition of Done` is informational):
+   all agent statuses) must pass before merging. In the manual `/ship-pr` path, right after opening the PR and after every new
+   push, the coordinator sets the agent gates to pending (`Definition of Done` is informational):
    `gh api -X POST repos/martinslavov/rcas/statuses/<head-sha> -f state=pending -f context="PR Review" -f description="Waiting for PR review"`
    `gh api -X POST repos/martinslavov/rcas/statuses/<head-sha> -f state=pending -f context="QA Agent" -f description="Waiting for QA"`
    `gh api -X POST repos/martinslavov/rcas/statuses/<head-sha> -f state=pending -f context="Definition of Done" -f description="Manual only - not run by flows"`
    (head SHA: `gh pr view <n> -R martinslavov/rcas --json headRefOid -q .headRefOid`). PR Review runs before QA; DoD runs only on explicit user request.
+   In `/ship-pr agent-read` mode, the intake action adds `agent-read` to the PR and the dispatcher starts PR Review; do not
+   set these gates manually or invoke review/QA agents directly.
    On blocker/major findings, the engineer fixes, pushes, resets the statuses to pending and hands back to PR Review. Minor/nit
    findings are reported but do not block QA. Count rounds from PR comments containing `<!-- pr-review-round:N -->`; on round 5
    failure apply `needs-human-review`, mention `@martinslavov`, and stop. Only a human removing the label resumes; retain all markers.
@@ -159,7 +171,7 @@ The steps below are what the agents follow:
    `Automated iteration limit reached; human review required`. No agent commits or merges while the label is present;
    automated agents never remove it. Only a human removing it explicitly resumes the loop: keep all markers and continue
    numbering above the original numeric limit without re-applying that limit; repeated-signature early stop still applies.
-8. **Merge (default).** Wait for all checks and `PR Review` and `QA Agent` success on the current head SHA (`Definition of Done` is not required). Before any auto-merge, check the review label with
+8. **Merge (default).** The main agent waits for all checks and `PR Review` and `QA Agent` success on the current head SHA (`Definition of Done` is not required). Before any merge, check the review label with
    `gh api repos/martinslavov/rcas/issues/<pr>/labels -q '.[].name | select(. == "needs-human-review")'`; if present, do not merge.
    Ignore tracking/workflow automation comments. Resolved QA findings do not by themselves block auto-merge after QA succeeds on the current
    head SHA; unresolved blocker/major findings and any human (non-agent/non-automation) comment continue to block it. If all checks pass, the label is absent,
@@ -207,7 +219,8 @@ for every sub-issue/PR pair and once more for the epic issue with the last PR an
 ## Agent run records
 
 Every agent run must append exactly one hidden, single-line JSON record to its durable GitHub comment before it finishes.
-Product Owner and Architect post on the task issue; Engineer, PR Review, QA and DoD post on the PR. Use
+Product Owner and Architect post on the task issue; Engineer posts on the task issue before an initial PR exists and on the PR
+for an existing-PR fix assignment; PR Review, QA and DoD post on the PR. Use
 `date -u +%Y-%m-%dT%H:%M:%SZ` for the UTC `start` and `end` timestamps and `date +%s` at both points to compute
 `duration_s` as elapsed whole seconds. Post via `gh issue comment <issue-or-pr-number> -R martinslavov/rcas --body '<marker>'`.
 For issue-only runs with no PR or head commit, use `null` for `pr` and/or `sha`. Use the same issue number throughout

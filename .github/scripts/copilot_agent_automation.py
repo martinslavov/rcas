@@ -22,6 +22,7 @@ API_VERSION = "2022-11-28"
 ENTRY_LABEL = "agent-read"
 HUMAN_REVIEW_LABEL = "needs-human-review"
 ARCHITECTURE_APPROVAL_LABEL = "architecture-approval-required"
+SHIP_PR_MARKER = "<!-- ship-pr -->"
 CI_FIX_ATTEMPT_LIMIT = 3
 REQUIRED_CHECKS = (
     "unit-tests",
@@ -268,37 +269,44 @@ def _candidate_prs(api: GitHub, sha: str) -> list[dict[str, Any]]:
 
 
 def _task_issue_for_pr(api: GitHub, pr: dict[str, Any]) -> dict[str, Any] | None:
-    if pr.get("state") != "open" or pr.get("base", {}).get("ref") != "main":
+    if (
+        pr.get("state") != "open"
+        or pr.get("base", {}).get("ref") != "main"
+        or SHIP_PR_MARKER not in (pr.get("body") or "")
+        or ENTRY_LABEL not in _labels(pr)
+    ):
         return None
     number = _linked_issue_number(pr.get("body") or "")
     if number is None:
         return None
     issue = api.request("GET", f"/repos/{api.repository}/issues/{number}")
-    if issue.get("state") != "open" or ENTRY_LABEL not in (_labels(issue) | _labels(pr)):
+    if issue.get("state") != "open" or _is_pr(issue):
         return None
     if HUMAN_REVIEW_LABEL in _labels(issue) or HUMAN_REVIEW_LABEL in _labels(pr):
         return None
     return issue
 
 
-def sync_entry_label(api: GitHub, pr: dict[str, Any]) -> bool:
-    """Copy `agent-read` from the linked open task issue to its PR."""
-    number = pr.get("number")
+def _dispatch_from_pull_request(event: dict[str, Any], api: GitHub) -> list[Dispatch]:
     if (
-        not number
-        or pr.get("state") != "open"
-        or pr.get("base", {}).get("ref") != "main"
-        or ENTRY_LABEL in _labels(pr)
+        event.get("action") != "labeled"
+        or (event.get("label") or {}).get("name") != ENTRY_LABEL
     ):
-        return False
-    issue_number = _linked_issue_number(pr.get("body") or "")
-    if issue_number is None:
-        return False
-    issue = api.request("GET", f"/repos/{api.repository}/issues/{issue_number}")
-    if issue.get("state") != "open" or ENTRY_LABEL not in _labels(issue):
-        return False
-    api.request("POST", f"/repos/{api.repository}/issues/{number}/labels", {"labels": [ENTRY_LABEL]})
-    return True
+        return []
+    number = (event.get("pull_request") or {}).get("number")
+    if not number:
+        return []
+    pr = api.request("GET", f"/repos/{api.repository}/pulls/{number}")
+    issue = _task_issue_for_pr(api, pr)
+    if issue is None:
+        return []
+    sha = (pr.get("head") or {}).get("sha")
+    if not isinstance(sha, str):
+        return []
+    status = api.request("GET", f"/repos/{api.repository}/commits/{sha}/status")
+    if _status_state(status, "PR Review") in {None, "pending"}:
+        return [Dispatch("pull", number, "pr-review-agent", sha)]
+    return []
 
 
 def _dispatch_from_status(event: dict[str, Any], api: GitHub) -> list[Dispatch]:
@@ -489,7 +497,6 @@ def _dispatch_from_schedule(api: GitHub) -> list[Dispatch]:
 
     ci_checks = tuple(name for name in REQUIRED_CHECKS if name not in {"PR Review", "QA Agent"})
     for pr in api.pages(f"/repos/{api.repository}/pulls?state=open&base=main"):
-        sync_entry_label(api, pr)
         if _task_issue_for_pr(api, pr) is None:
             continue
         sha = pr["head"]["sha"]
@@ -582,6 +589,8 @@ def get_dispatches(event_name: str, event: dict[str, Any], api: GitHub) -> list[
         dispatch = _dispatch_for_issue_comment(event, api)
         if dispatch:
             return [dispatch]
+    elif event_name == "pull_request":
+        return _dispatch_from_pull_request(event, api)
     elif event_name == "status":
         return _dispatch_from_status(event, api)
     elif event_name == "check_suite":

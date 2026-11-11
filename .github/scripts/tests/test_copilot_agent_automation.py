@@ -8,7 +8,6 @@ from copilot_agent_automation import (
     REQUIRED_CHECKS,
     get_dispatches,
     merge_if_ready,
-    sync_entry_label,
 )
 
 
@@ -23,14 +22,14 @@ class FakeGitHub:
             "number": 43,
             "state": "open",
             "draft": False,
-            "body": "Closes #42",
+            "body": "Closes #42\n<!-- ship-pr -->",
             "base": {"ref": "main"},
             "head": {
                 "sha": "a" * 40,
                 "ref": "feature/automated-task",
                 "repo": {"full_name": self.repository},
             },
-            "labels": [],
+            "labels": [{"name": ENTRY_LABEL}],
         }
         self.statuses = [
             {"context": name, "state": "success", "updated_at": "2026-01-01T00:00:00Z"}
@@ -316,30 +315,54 @@ class CopilotDispatchTest(unittest.TestCase):
 
     def test_schedule_recovers_architect_dispatch_for_labeled_issue(self):
         api = FakeGitHub()
+        api.pr["labels"] = []
         self.assertEqual(
             [Dispatch("issue", 42, "architect-agent")],
             get_dispatches("schedule", {}, api),
         )
 
-    def test_schedule_copies_agent_read_from_issue_to_pr(self):
+    def test_issue_agent_read_is_not_copied_to_the_pr(self):
         api = FakeGitHub()
-        get_dispatches("schedule", {}, api)
-        self.assertEqual([{"name": ENTRY_LABEL}], api.pr["labels"])
-
-    def test_sync_skips_labeled_closed_or_unlinked(self):
-        api = FakeGitHub()
-        api.pr["labels"] = [{"name": ENTRY_LABEL}]
-        self.assertFalse(sync_entry_label(api, api.pr))
         api.pr["labels"] = []
-        api.issue["state"] = "closed"
-        self.assertFalse(sync_entry_label(api, api.pr))
-        api.issue["state"] = "open"
-        api.issue["labels"] = []
-        self.assertFalse(sync_entry_label(api, api.pr))
-        api.issue["labels"] = [{"name": ENTRY_LABEL}]
-        api.pr["body"] = "no link"
-        self.assertFalse(sync_entry_label(api, api.pr))
+        get_dispatches("schedule", {}, api)
         self.assertEqual([], api.pr["labels"])
+
+    def test_unmarked_or_unlabeled_pr_is_not_automation_eligible(self):
+        api = FakeGitHub()
+        api.issue["labels"] = []
+        api.pr["labels"] = []
+        self.assertEqual([], get_dispatches("schedule", {}, api))
+        api.pr["labels"] = [{"name": ENTRY_LABEL}]
+        api.pr["body"] = "Closes #42"
+        self.assertEqual([], get_dispatches("schedule", {}, api))
+
+    def test_agent_read_pr_label_starts_review_without_restarting_engineer_stages(self):
+        api = FakeGitHub()
+        api.statuses = []
+        event = {
+            "action": "labeled",
+            "label": {"name": ENTRY_LABEL},
+            "pull_request": {"number": 43},
+        }
+        self.assertEqual(
+            [Dispatch("pull", 43, "pr-review-agent", "a" * 40)],
+            get_dispatches("pull_request", event, api),
+        )
+
+    def test_pr_label_event_requires_open_linked_ship_pr_and_no_human_review(self):
+        api = FakeGitHub()
+        event = {
+            "action": "labeled",
+            "label": {"name": ENTRY_LABEL},
+            "pull_request": {"number": 43},
+        }
+        api.pr["labels"] = [{"name": HUMAN_REVIEW_LABEL}, {"name": ENTRY_LABEL}]
+        self.assertEqual([], get_dispatches("pull_request", event, api))
+        api.pr["labels"] = [{"name": ENTRY_LABEL}]
+        api.pr["body"] = "Closes #42"
+        self.assertEqual([], get_dispatches("pull_request", event, api))
+        event["action"] = "unlabeled"
+        self.assertEqual([], get_dispatches("pull_request", event, api))
 
     def test_pr_label_alone_enables_pr_stages(self):
         api = FakeGitHub()
