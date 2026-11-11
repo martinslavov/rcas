@@ -57,6 +57,10 @@ class OrchestratorStateMachineTests(unittest.TestCase):
                 with self.assertRaisesRegex(OrchestratorError, "only human"):
                     transition_record(paused, "implementation", "senior-java-software-engineer", now=self.now)
 
+    def test_qa_cannot_transition_to_dod(self):
+        with self.assertRaises(OrchestratorError):
+            transition_record(self.record("qa"), "dod", "senior-qa-engineer", now=self.now)
+
     def test_rejected_edges(self):
         for source, (_, targets) in STATE_TABLE.items():
             allowed = set(targets)
