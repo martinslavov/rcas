@@ -28,7 +28,7 @@ A skill orchestrates; it does not replace the agents. Do not duplicate agent or 
 
 File: `.github/skills/ship-pr/SKILL.md`. Invoke with `/ship-pr`, or ask to ship, finish or merge the current change.
 
-Pipeline: commit → push → pull request → `pr-review-agent` → `senior-qa-engineer` → `dod-validator-agent` → merge.
+Pipeline: commit → push → pull request → `pr-review-agent` → `senior-qa-engineer` → merge. `dod-validator-agent` is manual only and is never run by this skill.
 
 | Rule | Behaviour |
 |------|-----------|
@@ -36,7 +36,7 @@ Pipeline: commit → push → pull request → `pr-review-agent` → `senior-qa-
 | Existing PR | If the branch already has an open PR, its number is reused and creation is skipped |
 | PR number | Captured once as `<number>` and substituted in all later steps (`Review PR #<number> in martinslavov/rcas.`, `Run QA for PR #<number> in martinslavov/rcas.`) |
 | PR body | Built from `.github/PULL_REQUEST_TEMPLATE/pull_request_template.md`; assigned to the current user; no review/QA/check claims |
-| Gates | `PR Review`, `QA Agent` and `Definition of Done` are reset to `pending` after every push and each must be `success` on the current head SHA, in that order |
+| Gates | `PR Review` and `QA Agent` are reset to `pending` after every push and each must be `success` on the current head SHA, in that order |
 | Failures | Blocker/major findings are fixed, pushed and the gates restart; loops are bounded to 5 rounds per gate |
 | Stop | `needs-human-review` label, exhausted rounds, or an empty change: stops and reports, no merge |
 | Merge | Only when all required checks and all agent statuses succeed on the current head SHA, using `gh pr merge --merge --delete-branch` |
@@ -48,4 +48,4 @@ Arguments: `/ship-pr [label[,label...]]`.
 |------------|-----------|
 | `/ship-pr` | Default labels only (type and impact); full pipeline through merge |
 | `/ship-pr <label>` | Default labels plus the given ones; unknown labels are reported, not created; `needs-human-review` is refused |
-| `/ship-pr agent-read` | Commit, push and PR with the `agent-read` label, then stop. The agent automation (dispatch, PR Review, QA, DoD, auto-merge) owns the rest, so the skill does not set gates, call `pr-review-agent`, `senior-qa-engineer` or `dod-validator-agent`, and does not merge, to avoid duplicates. See [Agent automation](agent-automation.md) |
+| `/ship-pr agent-read` | Commit, push and PR with the `agent-read` label, then stop. The agent automation (dispatch, PR Review, QA, auto-merge) owns the rest, so the skill does not set gates, call `pr-review-agent` or `senior-qa-engineer`, and does not merge, to avoid duplicates. See [Agent automation](agent-automation.md) |

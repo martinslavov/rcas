@@ -1,6 +1,6 @@
 ---
 name: ship-pr
-description: Ship the current work end to end - commit, push, open a PR, run PR Review, QA and DoD, then merge when every gate succeeds on the current head SHA. Optional arguments add PR labels; with `agent-read` it stops after opening the PR. Use when the user runs /ship-pr [labels] or asks to ship, finish or merge the current change.
+description: Ship the current work end to end - commit, push, open a PR, run PR Review and QA, then merge when every gate succeeds on the current head SHA. Optional arguments add PR labels; with `agent-read` it stops after opening the PR. Use when the user runs /ship-pr [labels] or asks to ship, finish or merge the current change.
 ---
 
 # Ship PR
@@ -15,14 +15,16 @@ custom agents. Repository: `martinslavov/rcas`. Record `date +%s` at the start f
 - No arguments: only the default labels (type `bug`/`documentation`/`enhancement` and impact `minor`/`major`).
 - With arguments: default labels plus the given ones. A label that does not exist is reported to the user, never created silently.
 - `needs-human-review` is refused as an argument; only a human applies or removes it.
-- **`agent-read` mode.** If `agent-read` is among the arguments, the automation (Copilot dispatch → PR Review → QA → DoD and
+- **`agent-read` mode.** If `agent-read` is among the arguments, the automation (Copilot dispatch → PR Review → QA and
   the auto-merge gate) owns the review pipeline. Then do steps 1-3 only (commit, push, PR with the labels, including
   `agent-read`) and **do not** run steps 4-9: do not set the gates to `pending`, do not invoke `pr-review-agent`,
-  `senior-qa-engineer` or `dod-validator-agent`, and do not merge. This avoids duplicate reviews and conflicting statuses.
+  or `senior-qa-engineer`, and do not merge. This avoids duplicate reviews and conflicting statuses.
   Report the PR link and that the agent automation continues; see `.github/docs/agent-automation.md`.
 
 ## Rules
 
+- **Definition of Done is manual only.** Never run `dod-validator-agent` and never wait for or require the `Definition of Done`
+  status; it is not a merge gate. Run it only if the user explicitly asks.
 - **Reuse the current branch.** Run `git branch --show-current`. If it is a `feature/*` or `hotfix/*` branch, work on it and do
   not create a new branch. Only when on `main` (or detached) create `feature/<slug>` (lowercase ASCII, digits, `-`) from an up to
   date `main`. Never commit or push to `main`.
@@ -44,7 +46,7 @@ custom agents. Repository: `martinslavov/rcas`. Record `date +%s` at the start f
    description, `Closes #<issue>` if an issue exists, local test commands with results, the acceptance criteria table).
    Add the labels the template asks for (type and impact) plus any labels passed as arguments (see "Arguments"; if the PR
    already exists, add the missing labels to it). Store the PR number as `<number>`; use it in every step below.
-4. **Reset gates.** Set `PR Review`, `QA Agent` and `Definition of Done` to `pending` on the head SHA
+4. **Reset gates.** Set `PR Review` and `QA Agent` to `pending` on the head SHA
    (`gh pr view <number> -R martinslavov/rcas --json headRefOid -q .headRefOid`) as described in the pull request rules of
    `.github/copilot-instructions.md`.
 5. **PR Review.** Delegate to `pr-review-agent`: `Review PR #<number> in martinslavov/rcas.`
@@ -55,17 +57,15 @@ custom agents. Repository: `martinslavov/rcas`. Record `date +%s` at the start f
    push; always compare against the current one.
 7. **QA.** Delegate to `senior-qa-engineer`: `Run QA for PR #<number> in martinslavov/rcas.` Wait for `QA Agent` = `success`.
    On failure fix and restart from step 4.
-8. **DoD.** Delegate to `dod-validator-agent`: `Validate Definition of Done for PR #<number> in martinslavov/rcas.` Wait for
-   `Definition of Done` = `success`. On failure add the missing evidence and restart from step 4.
-9. **Merge.** Verify with `gh pr checks <number> -R martinslavov/rcas` that every required check and all three agent statuses
+8. **Merge.** Verify with `gh pr checks <number> -R martinslavov/rcas` that every required check and the `PR Review` and `QA Agent` statuses
    are `success` on the current head SHA, and that
    `gh api repos/martinslavov/rcas/issues/<number>/labels -q '.[].name | select(. == "needs-human-review")'` is empty.
    Then `gh pr merge <number> -R martinslavov/rcas --merge --delete-branch`.
-10. **Report.** Give the PR link, merge status and total elapsed time. If a task issue exists, record the elapsed time with
+9. **Report.** Give the PR link, merge status and total elapsed time. If a task issue exists, record the elapsed time with
     `.github/scripts/post_task_elapsed.sh <issue> <number> <start-epoch>`.
 
 ## Loop limits
 
-Each of PR Review, QA, DoD and CI-fix has its own bounded loop of 5 rounds (see `.github/copilot-instructions.md`). If the
+Each of PR Review, QA and CI-fix has its own bounded loop of 5 rounds (see `.github/copilot-instructions.md`). If the
 label `needs-human-review` is applied, or a gate keeps failing after 5 rounds, stop, summarize the open findings for the user
 and do not merge.
