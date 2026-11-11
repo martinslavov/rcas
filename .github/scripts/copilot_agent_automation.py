@@ -277,11 +277,31 @@ def _task_issue_for_pr(api: GitHub, pr: dict[str, Any]) -> dict[str, Any] | None
     if number is None:
         return None
     issue = api.request("GET", f"/repos/{api.repository}/issues/{number}")
-    if issue.get("state") != "open" or ENTRY_LABEL not in _labels(issue):
+    if issue.get("state") != "open" or ENTRY_LABEL not in (_labels(issue) | _labels(pr)):
         return None
     if HUMAN_REVIEW_LABEL in _labels(issue) or HUMAN_REVIEW_LABEL in _labels(pr):
         return None
     return issue
+
+
+def sync_entry_label(api: GitHub, pr: dict[str, Any]) -> bool:
+    """Copy `agent-read` from the linked open task issue to its PR."""
+    number = pr.get("number")
+    if (
+        not number
+        or pr.get("state") != "open"
+        or pr.get("base", {}).get("ref") != "main"
+        or ENTRY_LABEL in _labels(pr)
+    ):
+        return False
+    issue_number = _linked_issue_number(pr.get("body") or "")
+    if issue_number is None:
+        return False
+    issue = api.request("GET", f"/repos/{api.repository}/issues/{issue_number}")
+    if issue.get("state") != "open" or ENTRY_LABEL not in _labels(issue):
+        return False
+    api.request("POST", f"/repos/{api.repository}/issues/{number}/labels", {"labels": [ENTRY_LABEL]})
+    return True
 
 
 def _dispatch_from_status(event: dict[str, Any], api: GitHub) -> list[Dispatch]:
@@ -472,6 +492,7 @@ def _dispatch_from_schedule(api: GitHub) -> list[Dispatch]:
 
     ci_checks = tuple(name for name in REQUIRED_CHECKS if name not in {"PR Review", "QA Agent"})
     for pr in api.pages(f"/repos/{api.repository}/pulls?state=open&base=main"):
+        sync_entry_label(api, pr)
         if _task_issue_for_pr(api, pr) is None:
             continue
         sha = pr["head"]["sha"]
@@ -484,7 +505,7 @@ def _dispatch_from_schedule(api: GitHub) -> list[Dispatch]:
             if not _failure_round_limit_reached(api, pr["number"], "PR Review"):
                 result.append(Dispatch("pull", pr["number"], "senior-java-software-engineer", sha))
             continue
-        if review_state == "pending":
+        if review_state in {None, "pending"}:
             result.append(Dispatch("pull", pr["number"], "pr-review-agent", sha))
             continue
         if review_state == "success":
