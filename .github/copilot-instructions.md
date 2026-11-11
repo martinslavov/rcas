@@ -1,19 +1,22 @@
 # Task workflow rules
 
-These rules apply when a task starts with a first line `TASK-NAME:<task-name>` (for example `TASK-NAME:code-review-agent` or `TASK-NAME:Code review agent`).
-Tasks without that line are handled normally, without creating an issue or branch unless needed. PR creation and task-issue
-intake are handled through `/ship-pr`.
+These rules apply when task input starts with `TASK-NAME:<task-name>` (for example `TASK-NAME:code-review-agent` or `TASK-NAME:Code review agent`), optionally preceded by `TAG: agent-read`. Tasks without a task-name control line are handled normally, without creating an issue or branch unless needed. PR creation and task-issue intake are handled through `/ship-pr` for local work; the guarded cloud PR workflow handles only eligible `agent-read` issues.
 
 ## Task input and queue (Backlog / TODO)
 
 The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Defining`, `TODO`, `In Progress` and `Done`.
 `.github/scripts/task_queue.sh list` prints open `TODO` issues oldest first. `task_queue.sh move` is an internal board projection only; agents must not use it to change task stages.
 
-- `TASK-NAME:<name>` (default): the Product Owner creates the issue without the `backlog` label, so the `CI Issue Board`
-  workflow puts it in `TODO`, and the full flow below runs immediately.
+- `TAG: agent-read` is optional first-line control metadata and must be followed by the existing task-name line. The Product
+  Owner consumes it (never includes it in issue title/body) and creates the issue with `agent-read` plus any needed labels.
+  Once Architect/approval/Engineer completes, a trusted, SHA-pinned poll workflow creates/reuses the branch PR and performs
+  guarded PR Review intake.
+- `TASK-NAME:<name>` (default, no TAG): the Product Owner creates the issue without the `backlog` label, so the `CI Issue Board`
+  workflow puts it in `TODO`, and the existing local flow runs immediately.
 - `LABEL:BACKLOG,TASK-NAME:<name>` (the `LABEL:` prefix is case-insensitive; the description follows as usual): the Product
   Owner creates the issue with the `backlog` label, so it lands in `Backlog`. Stop after the issue is created and report its
-  link; no Architect, branch or PR. Backlog items are never processed while they are in `Backlog`.
+  link; no Architect, branch or PR. Backlog items are never processed while they are in `Backlog`. If preceded by
+  `TAG: agent-read`, preserve both labels; cloud processing still waits until the issue is moved out of Backlog.
 - To start a backlog task, seed a missing record with `orchestrator.py init <issue> --state backlog --agent human`, then the human uses
   `orchestrator.py transition <issue> todo --agent human`; the transition projects the board Status and removes the legacy
   `backlog` label. Agents must not use `task_queue.sh move` directly to change a task stage.
@@ -24,9 +27,10 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 - For an issue that is ready for autonomous work, add the `agent-read` label. The Copilot cloud-agent workflow starts
   `architect-agent` first; it starts the Engineer only after an auditable skip/design note says approval is not required,
   or after the repository owner posts `<!-- architecture-approved -->` for an issue labelled
-  `architecture-approval-required`. The Engineer pushes the implementation branch without opening a PR; the main agent then
-  runs `/ship-pr agent-read`, which records the PR Review intake and puts `agent-read` on the PR (not the issue). The PR then
-  proceeds through PR Review → QA. A failed stage returns to the
+  `architecture-approval-required`. For `TAG: agent-read` tasks, the Engineer pushes the issue-numbered feature branch;
+  `ci-agent-pr-creation.yml` creates/reuses the marked PR and performs guarded PR Review intake. For local/manual tasks, the
+  main agent runs `/ship-pr agent-read` after the Engineer handoff. Both paths put `agent-read` on the PR (not the issue),
+  then proceed through PR Review → QA. A failed stage returns to the
   Engineer, and `needs-human-review` stops dispatch until a human removes that label. A separate merge gate merges only
   agent-read PRs whose required checks and the `PR Review` and `QA Agent` statuses succeed on the current
   head SHA, with no human PR comments/reviews. Dispatch and merge gates poll every five minutes while checks/statuses are
@@ -78,10 +82,11 @@ elapsed time recorded on the issue and PR:
 4. Delegate the issue (number, branch name, Architect comment and original input) to `senior-java-software-engineer` only
    after the approval gate is satisfied or Architect has documented a skip. It implements the task, commits and pushes the
    branch, then hands it back to the main agent. It must not create a PR. The main agent fetches and checks out that exact
-   branch, then runs `/ship-pr` to create the PR
-   from the template and link the task issue. For an issue labelled `agent-read`, use `/ship-pr agent-read`; the guarded
-   intake records the PR head SHA and starts at PR Review without re-running Architect or Engineer. For the manual path,
-   `/ship-pr` sets the gates to `pending` and the main agent owns the PR template's "Acceptance criteria → evidence" section.
+   branch. For `TAG: agent-read` issues, the isolated trusted workflow creates/reuses the template PR and runs guarded PR
+   Review intake. For local work, the main agent runs `/ship-pr` to create the PR and link the task issue; for a manual
+   agent-read handoff use `/ship-pr agent-read`, whose guarded intake starts PR Review without re-running Architect or
+   Engineer. In the manual path, `/ship-pr` sets the gates to `pending` and the main agent owns the PR template's
+   "Acceptance criteria → evidence" section.
 5. Delegate the PR number to `pr-review-agent`. It independently reads the issue and full diff, posts its findings, and always
    sets a final `PR Review` status on the current head SHA. For `architecture-approval-required` issues, it also verifies
    the implementation against the approved design note; a material deviation is at least `major`, and it requires backward
@@ -112,10 +117,11 @@ The steps below are what the agents follow:
 1. **Issue.** Create a GitHub issue for the task with `gh issue create` (title from the task name, written as readable text and a short description of the goal).
    The issue form is `.github/ISSUE_TEMPLATE/issue.yml`; the `CI Issue Board` workflow puts it on the board as `Backlog` when it has the
    `backlog` label, otherwise as `TODO` (see "Task input and queue").
-2. **Branch.** Create the branch `feature/<task-name>` from an up to date `main` and work only there.
-   If the value after `TASK-NAME:` is already a slug (lowercase, words separated by `-`), use it as is. Otherwise (free text such as `Code review agent`),
-   derive a short, meaningful slug yourself: lowercase, ASCII letters, digits and `-` only, fixing obvious typos, e.g. `feature/code-review-agent`.
-   Only `feature/*` and `hotfix/*` branches can be created.
+2. **Branch.** Create the branch from an up-to-date `main` and work only there. For a cloud `agent-read` issue use
+   `feature/<issue-number>-<task-name-slug>` (for example `feature/198-cloud-agent-flow`); the issue number is the trusted
+   association used by the cloud PR-creation guard. For local work retain `feature/<task-name>`. If the value after
+   `TASK-NAME:` is already a slug (lowercase, words separated by `-`), use it as is. Otherwise derive a short meaningful slug
+   in lowercase ASCII letters, digits and `-` only. Only `feature/*` and `hotfix/*` branches can be created.
 3. **Work.** Before creating a branch or implementing, the engineer reads the Architect design note or confirms the skip comment. If `architecture-approval-required` is present, the engineer must find the explicit `<!-- architecture-approved -->` user comment first; otherwise stop without creating a branch or changing files. Commit the changes with clear messages. Never push to `main` directly.
 4. **Pull request.** When implementation is complete, the Engineer pushes the branch and hands it to the main agent. The main
    agent runs `/ship-pr` to create the PR against `main` using `.github/PULL_REQUEST_TEMPLATE/pull_request_template.md`;
@@ -132,8 +138,9 @@ The steps below are what the agents follow:
    `gh api -X POST repos/martinslavov/rcas/statuses/<head-sha> -f state=pending -f context="QA Agent" -f description="Waiting for QA"`
    `gh api -X POST repos/martinslavov/rcas/statuses/<head-sha> -f state=pending -f context="Definition of Done" -f description="Manual only - not run by flows"`
    (head SHA: `gh pr view <n> -R martinslavov/rcas --json headRefOid -q .headRefOid`). PR Review runs before QA; DoD runs only on explicit user request.
-   In `/ship-pr agent-read` mode, the intake action adds `agent-read` to the PR and the dispatcher starts PR Review; do not
-   set these gates manually or invoke review/QA agents directly.
+   In local `/ship-pr agent-read` mode, the intake action adds `agent-read` to the PR and the dispatcher starts PR Review;
+   the cloud push workflow performs the same guarded intake for `TAG: agent-read` issues. Do not set these gates manually or
+   invoke review/QA agents directly.
    On blocker/major findings, the engineer fixes, pushes, resets the statuses to pending and hands back to PR Review. Minor/nit
    findings are reported but do not block QA. Count rounds from PR comments containing `<!-- pr-review-round:N -->`; on round 5
    failure apply `needs-human-review`, mention `@martinslavov`, and stop. Only a human removing the label resumes; retain all markers.

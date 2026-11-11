@@ -130,6 +130,23 @@ class CopilotDispatchTest(unittest.TestCase):
             get_dispatches("issues", event, FakeGitHub()),
         )
 
+    def test_backlog_agent_read_issue_waits_until_moved_to_todo(self):
+        api = FakeGitHub()
+        api.issue["labels"].append({"name": "backlog"})
+        api.pr["labels"] = []
+        event = {
+            "action": "labeled",
+            "label": {"name": ENTRY_LABEL},
+            "issue": {
+                "number": 42,
+                "state": "open",
+                "labels": [{"name": ENTRY_LABEL}, {"name": "backlog"}],
+            },
+        }
+
+        self.assertEqual([], get_dispatches("issues", event, api))
+        self.assertEqual([], get_dispatches("schedule", {}, api))
+
     def test_architecture_note_without_approval_starts_engineer(self):
         api = FakeGitHub()
         body = "<!-- architect-design-note -->\nApproval required: no"
@@ -155,6 +172,21 @@ class CopilotDispatchTest(unittest.TestCase):
             [Dispatch("issue", 42, "senior-java-software-engineer")],
             get_dispatches("issue_comment", event, api),
         )
+
+    def test_design_note_requires_approval_even_if_approval_label_is_missing(self):
+        api = FakeGitHub()
+        note = "<!-- architect-design-note -->\nApproval required: yes"
+        api.issue_comments.extend([
+            {"body": Dispatch("issue", 42, "architect-agent").marker, "user": {"login": api.owner}},
+            {"body": note, "user": {"login": "copilot-swe-agent[bot]"}},
+        ])
+        event = {
+            "action": "created",
+            "issue": {"number": 42, "state": "open", "labels": [{"name": ENTRY_LABEL}]},
+            "comment": {"body": note, "user": {"login": "copilot-swe-agent[bot]"}},
+        }
+
+        self.assertEqual([], get_dispatches("issue_comment", event, api))
 
     def test_architecture_approval_must_be_by_repository_owner(self):
         api = FakeGitHub()
