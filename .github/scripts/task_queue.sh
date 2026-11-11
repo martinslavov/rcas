@@ -16,15 +16,20 @@ usage() {
   exit 2
 }
 
+# Projects (GraphQL) calls use PROJECT_TOKEN when set; repository REST calls keep the ambient GH_TOKEN.
+project_gh() {
+  if [[ -n "${PROJECT_TOKEN:-}" ]]; then GH_TOKEN="$PROJECT_TOKEN" gh "$@"; else gh "$@"; fi
+}
+
 project_json() {
-  gh api graphql -f query='query($owner: String!, $number: Int!) { user(login: $owner) { projectV2(number: $number) { id field(name: "Status") { ... on ProjectV2SingleSelectField { id options { id name } } } } } }' \
+  project_gh api graphql -f query='query($owner: String!, $number: Int!) { user(login: $owner) { projectV2(number: $number) { id field(name: "Status") { ... on ProjectV2SingleSelectField { id options { id name } } } } } }' \
     -f owner="$OWNER" -F number="$PROJECT_NUMBER" --jq '.data.user.projectV2'
 }
 
 list_todo() {
   local cursor="" page
   while :; do
-    page=$(gh api graphql -f query='query($owner: String!, $number: Int!, $after: String) { user(login: $owner) { projectV2(number: $number) { items(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } content { ... on Issue { number title state repository { nameWithOwner } } } } } } } }' \
+    page=$(project_gh api graphql -f query='query($owner: String!, $number: Int!, $after: String) { user(login: $owner) { projectV2(number: $number) { items(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } content { ... on Issue { number title state repository { nameWithOwner } } } } } } } }' \
       -f owner="$OWNER" -F number="$PROJECT_NUMBER" ${cursor:+-f after="$cursor"} --jq '.data.user.projectV2.items')
     jq -r --arg repo "$REPO" '.nodes[]
       | select(.status.name == "TODO" and .content.state == "OPEN" and .content.repository.nameWithOwner == $repo)
@@ -46,10 +51,10 @@ move_issue() {
     exit 2
   fi
   issue_id=$(gh api "repos/$REPO/issues/$issue" --jq '.node_id')
-  item_id=$(gh api graphql \
+  item_id=$(project_gh api graphql \
     -f query='mutation($project: ID!, $content: ID!) { addProjectV2ItemById(input: {projectId: $project, contentId: $content}) { item { id } } }' \
     -f project="$project_id" -f content="$issue_id" --jq '.data.addProjectV2ItemById.item.id')
-  gh api graphql \
+  project_gh api graphql \
     -f query='mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) { updateProjectV2ItemFieldValue(input: {projectId: $project, itemId: $item, fieldId: $field, value: {singleSelectOptionId: $option}}) { projectV2Item { id } } }' \
     -f project="$project_id" -f item="$item_id" -f field="$field_id" -f option="$option_id" > /dev/null
   echo "#$issue -> $status"
