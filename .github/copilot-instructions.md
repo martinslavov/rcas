@@ -1,22 +1,24 @@
 # Task workflow rules
 
-These rules apply when task input starts with `TASK-NAME:<task-name>` (for example `TASK-NAME:code-review-agent` or `TASK-NAME:Code review agent`), optionally preceded by `TAG: agent-read`. Tasks without a task-name control line are handled normally, without creating an issue or branch unless needed. PR creation and task-issue intake are handled through `/ship-pr` for local work; the guarded cloud PR workflow handles only eligible `agent-read` issues.
+These rules apply when task input starts with `TASK-NAME:<task-name>` (for example `TASK-NAME:code-review-agent` or `TASK-NAME:Code review agent`), optionally followed by `TAG: agent-read` on line 2. A `DESCRIPTION: <text>` prefix on the description is optional. The legacy order with `TAG: agent-read` on line 1 remains accepted, as does `LABEL:BACKLOG,TASK-NAME:<task-name>` with an optional TAG on line 2. Tasks without a task-name control line are handled normally, without creating an issue or branch unless needed. PR creation and task-issue intake are handled through `/ship-pr` for local work; the guarded cloud PR workflow handles only eligible `agent-read` issues.
 
 ## Task input and queue (Backlog / TODO)
 
 The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Defining`, `TODO`, `In Progress` and `Done`.
 `.github/scripts/task_queue.sh list` prints open `TODO` issues oldest first. `task_queue.sh move` is an internal board projection only; agents must not use it to change task stages.
 
-- `TAG: agent-read` is optional first-line control metadata and must be followed by the existing task-name line. The Product
-  Owner consumes it (never includes it in issue title/body) and creates the issue with `agent-read` plus any needed labels.
+- Canonical input starts with `TASK-NAME:<name>`, optionally followed by `TAG: agent-read` on line 2, and then the description.
+  An optional leading `DESCRIPTION:` prefix is stripped. The Product Owner consumes TAG (never includes it in issue title/body)
+  and creates the issue with `agent-read` plus any needed labels. For compatibility, the old first-line TAG order remains accepted.
   Once Architect/approval/Engineer completes, a trusted, SHA-pinned poll workflow creates/reuses the branch PR and performs
   guarded PR Review intake.
 - `TASK-NAME:<name>` (default, no TAG): the Product Owner creates the issue without the `backlog` label, so the `CI Issue Board`
   workflow puts it in `TODO`, and the existing local flow runs immediately.
 - `LABEL:BACKLOG,TASK-NAME:<name>` (the `LABEL:` prefix is case-insensitive; the description follows as usual): the Product
   Owner creates the issue with the `backlog` label, so it lands in `Backlog`. Stop after the issue is created and report its
-  link; no Architect, branch or PR. Backlog items are never processed while they are in `Backlog`. If preceded by
-  `TAG: agent-read`, preserve both labels; cloud processing still waits until the issue is moved out of Backlog.
+  link; no Architect, branch or PR. Backlog items are never processed while they are in `Backlog`. An optional second-line
+  `TAG: agent-read` adds both labels; cloud processing still waits until the issue is moved out of Backlog. The legacy first-line
+  TAG followed by the backlog task-name line is also accepted.
 - To start a backlog task, seed a missing record with `orchestrator.py init <issue> --state backlog --agent human`, then the human uses
   `orchestrator.py transition <issue> todo --agent human`; the transition projects the board Status and removes the legacy
   `backlog` label. Agents must not use `task_queue.sh move` directly to change a task stage.

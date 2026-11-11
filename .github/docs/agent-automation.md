@@ -11,10 +11,11 @@ same existing secret only in its trusted PR-creation step: only its `POST /pulls
 CI checks run. Checkout and all untrusted-content steps receive no such secret; the workflow `GITHUB_TOKEN` performs the
 remaining guarded checks and intake. No additional secret is needed. Do not put tokens in issue text.
 
-The `agent-read` repository label is the opt-in switch. On an issue, it starts Architect/Engineer automation. Input may be
-prefixed with `TAG: agent-read`; the Product Owner consumes that metadata (using `.github/scripts/task_input.py`) and creates
-the issue with `agent-read`, never copying the TAG line into the title/body. Plain `TASK-NAME:` remains the local/default flow;
-`LABEL:BACKLOG,TASK-NAME:` retains its backlog behavior.
+The `agent-read` repository label is the opt-in switch. On an issue, it starts Architect/Engineer automation. Canonical task
+input starts with `TASK-NAME:<name>`, with optional `TAG: agent-read` on line 2 and a description after that (optionally
+introduced by `DESCRIPTION:`). The Product Owner consumes that metadata using `.github/scripts/task_input.py` and creates the
+issue with `agent-read`, never copying the TAG control line into the title/body. The legacy first-line TAG order remains
+accepted. `LABEL:BACKLOG,TASK-NAME:` retains its backlog behavior and may also have TAG on line 2.
 
 For the cloud path, the Engineer pushes `feature/<issue-number>-<task-name-slug>`. The isolated `ci-agent-pr-creation.yml`
 workflow runs only from its trusted default-branch five-minute schedule; feature-branch pushes cannot execute its workflow

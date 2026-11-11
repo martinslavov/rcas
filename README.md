@@ -289,12 +289,14 @@ Custom agents live in `.github/agents/`:
 
 Reusable procedures such as `/ship-pr` (commit → push → PR → PR Review → QA → merge; DoD is manual only and not run by the skill) live in `.github/skills/`; see [Skills](.github/docs/skills.md).
 
-Give a task as `TASK-NAME:<name>` followed by the description for the interactive local workflow. To opt into the cloud
-flow, prefix it with `TAG: agent-read`; the Product Owner consumes this control line, creates the issue with `agent-read`, and
-keeps TAG out of the issue title/body. Copilot runs Architect first, waits for required human approval when applicable, then
-dispatches Engineer. The trusted cloud PR workflow creates/reuses an eligible `feature/<issue>-<task-slug>` PR and hands off
-to PR Review → QA → automatic merge. The five-minute poll recovers a missed PR/intake. Plain TASK-NAME and
-LABEL:BACKLOG,TASK-NAME retain the existing behavior. See [Agent automation](.github/docs/agent-automation.md).
+Give a task with `TASK-NAME:<name>` on the first line. To opt into the cloud flow, add `TAG: agent-read` as the optional
+second line; then provide `DESCRIPTION: <description>` or free-form description text. The Product Owner consumes the TAG
+control line, creates the issue with `agent-read`, and keeps control metadata out of the issue title/body. Copilot runs
+Architect first, waits for required human approval when applicable, then dispatches Engineer. The trusted cloud PR workflow
+creates/reuses an eligible `feature/<issue>-<task-slug>` PR and hands off to PR Review → QA → automatic merge. The five-minute
+poll recovers a missed PR/intake. For backward compatibility, a first-line TAG followed by the task-name line is still
+accepted. `LABEL:BACKLOG,TASK-NAME:<name>` also remains supported, with optional TAG on the next line. See
+[Agent automation](.github/docs/agent-automation.md).
 
 The interactive workflow is Product Owner → Architect (design note or auditable skip) →
 explicit user approval when required → Engineer → (cloud PR workflow for TAG tasks or `/ship-pr` locally) → PR Review → QA → merge → elapsed time recorded on the issue and PR
@@ -349,10 +351,10 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 
 | Input | Result |
 |-------|--------|
-| `TAG: agent-read` + `TASK-NAME:<name>` | Issue created in `TODO` with `agent-read`; Architect/approval/Engineer and the trusted cloud PR workflow continue automatically |
-| `TASK-NAME:<name>` | Issue created in `TODO` (default) and the existing local flow runs |
-| `LABEL:BACKLOG,TASK-NAME:<name>` | Issue created with the `backlog` label in `Backlog`; nothing else runs |
-| `TAG: agent-read` + `LABEL:BACKLOG,TASK-NAME:<name>` | Both labels are preserved; cloud processing waits until a human moves the issue out of Backlog |
+| `TASK-NAME:<name>` then optional `TAG: agent-read` | Issue created in `TODO` with `agent-read`; Architect/approval/Engineer and the trusted cloud PR workflow continue automatically |
+| `TASK-NAME:<name>` without TAG | Issue created in `TODO` (default) and the existing local flow runs |
+| `LABEL:BACKLOG,TASK-NAME:<name>` then optional `TAG: agent-read` | Issue created in `Backlog`; the `backlog` label is set, and `agent-read` is also set when TAG is present |
+| Legacy `TAG: agent-read` then a task-name line | Accepted for backward compatibility; labels and flow match the corresponding task-name input |
 
 To start a backlog task without a state record, first seed it with `orchestrator.py init <issue> --state backlog --agent human`,
 then use `orchestrator.py transition <issue> todo --agent human`; it updates the board and removes the legacy `backlog` label.
