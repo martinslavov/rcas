@@ -361,6 +361,20 @@ class CopilotDispatchTest(unittest.TestCase):
             get_dispatches("schedule", {}, api),
         )
 
+    def test_dod_is_never_dispatched(self):
+        for state in ("pending", "failure", "error", "success"):
+            api = FakeGitHub()
+            api.issue["labels"] = []
+            api.pr["labels"] = [{"name": ENTRY_LABEL}]
+            for item in api.statuses:
+                if item["context"] == "Definition of Done":
+                    item["state"] = state
+            self.assertEqual([], get_dispatches("schedule", {}, api))
+        for context, state in (("QA Agent", "success"), ("Definition of Done", "pending"), ("Definition of Done", "failure")):
+            api = FakeGitHub()
+            event = {"context": context, "state": state, "sha": "a" * 40}
+            self.assertEqual([], get_dispatches("status", event, api))
+
 
 class AutoMergeTest(unittest.TestCase):
     def test_merges_only_when_checks_statuses_and_comments_are_clear(self):
@@ -379,11 +393,12 @@ class AutoMergeTest(unittest.TestCase):
         )
         self.assertTrue(api.merged)
 
-    def test_missing_definition_of_done_blocks_merge(self):
+    def test_definition_of_done_does_not_gate_merge(self):
         api = FakeGitHub()
         api.statuses = [item for item in api.statuses if item["context"] != "Definition of Done"]
-        self.assertFalse(merge_if_ready(api, 43))
-        self.assertFalse(api.merged)
+        with patch("copilot_agent_automation.subprocess.run"):
+            self.assertTrue(merge_if_ready(api, 43))
+        self.assertTrue(api.merged)
 
     def test_failed_required_check_blocks_merge(self):
         api = FakeGitHub()

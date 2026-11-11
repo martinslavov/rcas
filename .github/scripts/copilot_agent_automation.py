@@ -39,11 +39,8 @@ AGENT_STATUSES = {
     ("PR Review", "success"): "senior-qa-engineer",
     ("PR Review", "failure"): "senior-java-software-engineer",
     ("PR Review", "error"): "senior-java-software-engineer",
-    ("QA Agent", "success"): "dod-validator-agent",
     ("QA Agent", "failure"): "senior-java-software-engineer",
     ("QA Agent", "error"): "senior-java-software-engineer",
-    ("Definition of Done", "failure"): "senior-java-software-engineer",
-    ("Definition of Done", "error"): "senior-java-software-engineer",
 }
 AGENT_FILES = {
     "architect-agent": "architect.agent.md",
@@ -499,7 +496,6 @@ def _dispatch_from_schedule(api: GitHub) -> list[Dispatch]:
         status = api.request("GET", f"/repos/{api.repository}/commits/{sha}/status")
         review_state = _status_state(status, "PR Review")
         qa_state = _status_state(status, "QA Agent")
-        dod_state = _status_state(status, "Definition of Done")
 
         if review_state in {"failure", "error"}:
             if not _failure_round_limit_reached(api, pr["number"], "PR Review"):
@@ -516,14 +512,6 @@ def _dispatch_from_schedule(api: GitHub) -> list[Dispatch]:
             if qa_state == "pending":
                 result.append(Dispatch("pull", pr["number"], "senior-qa-engineer", sha))
                 continue
-            if qa_state == "success":
-                if dod_state in {"failure", "error"}:
-                    if not _failure_round_limit_reached(api, pr["number"], "Definition of Done"):
-                        result.append(Dispatch("pull", pr["number"], "senior-java-software-engineer", sha))
-                    continue
-                if dod_state == "pending":
-                    result.append(Dispatch("pull", pr["number"], "dod-validator-agent", sha))
-                    continue
 
         check_runs = _check_runs(api, sha)
         dispatch = _ci_fix_dispatch(api, pr, sha, _failed_ci_runs(check_runs, ci_checks))
@@ -536,7 +524,6 @@ def _failure_round_limit_reached(api: GitHub, pr_number: int, context: str) -> b
     marker = {
         "PR Review": "pr-review-round",
         "QA Agent": "qa-round",
-        "Definition of Done": "dod-round",
     }.get(context)
     if marker is None:
         return False
@@ -573,7 +560,7 @@ def get_dispatches(event_name: str, event: dict[str, Any], api: GitHub) -> list[
                 check_runs = _check_runs(api, pr["head"]["sha"])
                 agent_failed = any(
                     _status_state(status, name) in {"failure", "error"}
-                    for name in ("PR Review", "QA Agent", "Definition of Done")
+                    for name in ("PR Review", "QA Agent")
                 )
                 ci_failed = any(
                     _latest_check_result(check_runs, [], name)[0]
@@ -777,7 +764,7 @@ def merge_if_ready(api: GitHub, number: int) -> bool:
         return False
     status = api.request("GET", f"/repos/{api.repository}/commits/{sha}/status")
     check_runs = _check_runs(api, sha)
-    for name in REQUIRED_CHECKS + ("Definition of Done",):
+    for name in REQUIRED_CHECKS:
         state, source = _latest_check_result(check_runs, status.get("statuses", []), name)
         if state != "success":
             print(f"PR #{number} is waiting for {name} ({state or 'missing'}, {source})")

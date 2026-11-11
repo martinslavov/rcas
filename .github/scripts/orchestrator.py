@@ -25,7 +25,7 @@ STATE_TABLE: dict[str, tuple[str | None, frozenset[str]]] = {
     "approval-pending": ("human", frozenset({"implementation", "blocked"})),
     "implementation": ("senior-java-software-engineer", frozenset({"pr-review"})),
     "pr-review": ("pr-review-agent", frozenset({"qa", "implementation"})),
-    "qa": ("senior-qa-engineer", frozenset({"dod", "implementation"})),
+    "qa": ("senior-qa-engineer", frozenset({"merge", "implementation"})),
     "dod": ("dod-validator-agent", frozenset({"merge", "implementation"})),
     "merge": ("senior-java-software-engineer", frozenset({"done"})),
     "done": (None, frozenset()),

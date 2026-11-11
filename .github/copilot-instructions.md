@@ -23,9 +23,9 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 - For an issue that is ready for autonomous work, add the `agent-read` label. The Copilot cloud-agent workflow starts
   `architect-agent` first; it starts the Engineer only after an auditable skip/design note says approval is not required,
   or after the repository owner posts `<!-- architecture-approved -->` for an issue labelled
-  `architecture-approval-required`. The PR then proceeds through PR Review → QA → DoD. A failed stage returns to the
+  `architecture-approval-required`. The PR then proceeds through PR Review → QA. A failed stage returns to the
   Engineer, and `needs-human-review` stops dispatch until a human removes that label. A separate merge gate merges only
-  agent-read PRs whose required checks and all three agent statuses, including Definition of Done, succeed on the current
+  agent-read PRs whose required checks and the `PR Review` and `QA Agent` statuses succeed on the current
   head SHA, with no human PR comments/reviews. Dispatch and merge gates poll every five minutes while checks/statuses are
   pending.
   Setup and token permissions are documented in `.github/docs/agent-automation.md` and `.github/docs/security.md`.
@@ -53,12 +53,12 @@ Six custom agents (in `.github/agents/`) do the work:
 - `senior-java-software-engineer`: Senior Java Software Engineer, implements the issue and opens the PR.
 - `pr-review-agent`: independent PR Reviewer, reviews the complete diff, posts severity-ranked findings and sets `PR Review`.
 - `senior-qa-engineer`: Senior QA Engineer, reviews and tests the PR and sets the `QA Agent` commit status.
-- `dod-validator-agent`: Definition of Done Validator, runs after QA, maps every acceptance criterion of the linked issue to
+- `dod-validator-agent`: Definition of Done Validator, **manual only**: no workflow, orchestrator stage or other agent starts it; it runs only when the user explicitly asks. Maps every acceptance criterion of the linked issue to
   concrete behaviour-verifying evidence, posts the AC → evidence table and sets the `Definition of Done` commit status; never
   changes code.
 
 When a task has the `TASK-NAME:` line, run them one after the other (the main agent only coordinates). The sequence is
-Product Owner → Architect (design note or skip) → user approval when required → Engineer → PR Review → QA → DoD → merge →
+Product Owner → Architect (design note or skip) → user approval when required → Engineer → PR Review → QA → merge →
 elapsed time recorded on the issue and PR:
 
 1. Delegate the whole input to `product-owner-agent`. It returns the issue number, URL and the branch name.
@@ -74,29 +74,28 @@ elapsed time recorded on the issue and PR:
    security-relevant dependencies).
 4. Delegate the issue (number, branch name, Architect comment and original input) to `senior-java-software-engineer` only
    after the approval gate is satisfied or Architect has documented a skip. It implements the task, opens the PR, and
-   immediately sets `PR Review`, `QA Agent` and `Definition of Done` to `pending` on the PR head SHA and fills the PR template's
+   immediately sets `PR Review` and `QA Agent` to `pending` (and the informational `Definition of Done` to `pending` with the description `Manual only - not run by flows`) on the PR head SHA and fills the PR template's
    "Acceptance criteria → evidence" section.
 5. Delegate the PR number to `pr-review-agent`. It independently reads the issue and full diff, posts its findings, and always
    sets a final `PR Review` status on the current head SHA. For `architecture-approval-required` issues, it also verifies
    the implementation against the approved design note; a material deviation is at least `major`, and it requires backward
-   compatibility evidence plus migration and rollback considerations for schema changes. On blocker/major findings, the engineer fixes them, pushes, resets all three
-   gates (`PR Review`, `QA Agent`, `Definition of Done`) to `pending`, and hands the updated PR back to PR Review. The loop is bounded at five rounds; on a
+   compatibility evidence plus migration and rollback considerations for schema changes. On blocker/major findings, the engineer fixes them, pushes, resets the
+   gates (`PR Review`, `QA Agent`; `Definition of Done` stays informational) to `pending`, and hands the updated PR back to PR Review. The loop is bounded at five rounds; on a
    round-5 failure, the agent applies `needs-human-review` and escalates to the user. Only a human removing the label resumes it.
 6. Only after `PR Review` is `success` on the current head SHA, delegate the PR number to `senior-qa-engineer`. QA reviews the
    change, runs the relevant checks and sets `QA Agent` on the head SHA to `success` or `failure` (it must always set a final
-   status). On QA failures before round 5, the engineer fixes and pushes, resets all three statuses to `pending`, and hands over to PR
+   status). On QA failures before round 5, the engineer fixes and pushes, resets the statuses to `pending`, and hands over to PR
    Review first, then QA after PR Review succeeds. QA round-5 failure has the same human-review stop and resumption semantics.
-7. Only after `QA Agent` is `success` on the current head SHA, delegate the PR number to `dod-validator-agent`. It reads the issue
+7. **DoD is manual only and is not part of any automatic flow.** Never delegate to `dod-validator-agent` unless the user explicitly asks for it; it is not required for merge. When the user does ask, it reads the issue
    linked by `Closes #N`, maps every acceptance criterion to concrete evidence (a test that verifies the behaviour, not merely that
    a class exists; e.g. cache expiry needs a test asserting expiration after the TTL; for docs/process criteria a `file:line` or a
    verified command output), posts a PR comment with `<!-- dod-validation sha:<head-sha> -->` and a table
    `# | Acceptance criterion | Evidence | Verdict` (`met`, `weak`, `missing`), and always sets `Definition of Done` on the head SHA:
    `success` only when every criterion is `met`, otherwise `failure` (also `no acceptance criteria` when the issue has none).
-   On failure before round 5 the engineer adds the missing evidence (usually tests), pushes, resets all three statuses and the PR
-   goes through PR Review → QA → DoD again. DoD failure rounds use `<!-- dod-round:N -->` markers (count per PR, independent of
-   the other counters) with the same 5-round / `needs-human-review` rule as QA.
+   A manual DoD failure is reported to the user and does not dispatch the engineer. Its rounds use `<!-- dod-round:N -->` markers (count per PR, independent of
+   the other counters).
 8. Report the issue and PR links, merge status and total elapsed time (see "Elapsed time" below). The engineer merges by default
-   only when all required checks pass, `PR Review`, `QA Agent` and `Definition of Done` are `success` on the current head SHA, `needs-human-review`
+   only when all required checks pass, `PR Review` and `QA Agent` are `success` on the current head SHA, `needs-human-review`
    is absent, and no human comments or unresolved blocker/major findings remain. Resolved findings do not block after the relevant current-head
    status succeeds. Do not merge if the user asks to keep the PR open. After the merge, record the elapsed time on the issue and
    the PR with `.github/scripts/post_task_elapsed.sh` (see "Elapsed time"). Then check the queue (`task_queue.sh list`) and
@@ -117,13 +116,13 @@ The steps below are what the agents follow:
    The `PR Issue Tracking` workflow adds the tracking issue link to the description. Do not put review, QA or CI/check-status
    claims in the PR description (including "no review performed" or "QA pending"); commit statuses and check runs are the
    source of truth. The testing section may list only local commands actually run and their results; if none were run, leave it without test-result entries rather than adding prose about unrun tests. Required checks (unit, component and sanity tests and
-   all agent statuses) must pass before merging. Right after opening the PR, and after every new push, the engineer sets all three agent
-   gates to pending:
+   all agent statuses) must pass before merging. Right after opening the PR, and after every new push, the engineer sets the agent
+   gates to pending (`Definition of Done` is informational):
    `gh api -X POST repos/martinslavov/rcas/statuses/<head-sha> -f state=pending -f context="PR Review" -f description="Waiting for PR review"`
    `gh api -X POST repos/martinslavov/rcas/statuses/<head-sha> -f state=pending -f context="QA Agent" -f description="Waiting for QA"`
-   `gh api -X POST repos/martinslavov/rcas/statuses/<head-sha> -f state=pending -f context="Definition of Done" -f description="Waiting for DoD validation"`
-   (head SHA: `gh pr view <n> -R martinslavov/rcas --json headRefOid -q .headRefOid`). PR Review runs before QA, QA before DoD.
-   On blocker/major findings, the engineer fixes, pushes, resets all three statuses to pending and hands back to PR Review. Minor/nit
+   `gh api -X POST repos/martinslavov/rcas/statuses/<head-sha> -f state=pending -f context="Definition of Done" -f description="Manual only - not run by flows"`
+   (head SHA: `gh pr view <n> -R martinslavov/rcas --json headRefOid -q .headRefOid`). PR Review runs before QA; DoD runs only on explicit user request.
+   On blocker/major findings, the engineer fixes, pushes, resets the statuses to pending and hands back to PR Review. Minor/nit
    findings are reported but do not block QA. Count rounds from PR comments containing `<!-- pr-review-round:N -->`; on round 5
    failure apply `needs-human-review`, mention `@martinslavov`, and stop. Only a human removing the label resumes; retain all markers.
 5. **Bounded PR Review loop.** Every PR Review report includes `<!-- pr-review-round:N -->`. Derive the round from issue comments and review bodies (the report is posted as an issue comment; duplicate N are deduplicated):
@@ -160,7 +159,7 @@ The steps below are what the agents follow:
    `Automated iteration limit reached; human review required`. No agent commits or merges while the label is present;
    automated agents never remove it. Only a human removing it explicitly resumes the loop: keep all markers and continue
    numbering above the original numeric limit without re-applying that limit; repeated-signature early stop still applies.
-8. **Merge (default).** Wait for all checks and `PR Review`, `QA Agent` and `Definition of Done` success on the current head SHA. Before any auto-merge, check the review label with
+8. **Merge (default).** Wait for all checks and `PR Review` and `QA Agent` success on the current head SHA (`Definition of Done` is not required). Before any auto-merge, check the review label with
    `gh api repos/martinslavov/rcas/issues/<pr>/labels -q '.[].name | select(. == "needs-human-review")'`; if present, do not merge.
    Ignore tracking/workflow automation comments. Resolved QA findings do not by themselves block auto-merge after QA succeeds on the current
    head SHA; unresolved blocker/major findings and any human (non-agent/non-automation) comment continue to block it. If all checks pass, the label is absent,
@@ -172,7 +171,7 @@ Commit messages end with the trailer `Co-authored-by: Copilot <223556219+Copilot
 
 ### Required checks
 
-The `Main protection` ruleset currently requires these status checks: `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review`, `secret-scan` and `PR Review`. `PR Review` is a workflow gate that must be `success` on the current head SHA before QA or merge; it is also a required status check in the ruleset (ruleset 25822954). `Definition of Done` is validated after QA and must be `success` on the current head SHA before merge; it is added to the ruleset only after it has reported once, so open PRs are not blocked. **No agent may merge unless every ruleset-required check and all agent statuses (`PR Review`, `QA Agent`, `Definition of Done`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge).
+The `Main protection` ruleset currently requires these status checks: `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review`, `secret-scan` and `PR Review`. `PR Review` is a workflow gate that must be `success` on the current head SHA before QA or merge; it is also a required status check in the ruleset (ruleset 25822954). `Definition of Done` is manual only, stays visible on the PR, and is neither required nor a merge gate (do not add it to the ruleset). **No agent may merge unless every ruleset-required check and the agent statuses (`PR Review`, `QA Agent`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge).
 Check the current head SHA with `gh pr checks <n> -R martinslavov/rcas`. The unit-tests job also enforces the JaCoCo coverage minimums
 (`./gradlew build`; report with `./gradlew jacocoTestReport`). Dependabot security-update PRs get no `QA Agent` status automatically:
 they need the normal agent flow or a human.
