@@ -49,7 +49,8 @@ public class SubscriptionServiceImpl implements SubscriptionService {
 
         return Flux.just(userId)
                 .flatMap(id -> kpi.measure(KPITypes.SUBSCRIPTION, "findSubscriptionsByUserId",
-                        () -> cacheService.getCache(userId * -1, CACHE_NAME_SUBSCRIPTION,() -> subscriptionRepository.findSubscriptionsByUserId(id))));
+                        () -> cacheService.getCache(userId * -1, CACHE_NAME_SUBSCRIPTION, Subscription.class,
+                                () -> subscriptionRepository.findSubscriptionsByUserId(id))));
     }
 
 }

@@ -2,19 +2,22 @@ package com.gbp.rcas.service.impl;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
+import org.springframework.data.redis.core.ReactiveHashOperations;
+import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import tools.jackson.databind.ObjectMapper;
+
+import java.time.Duration;
 import java.util.List;
-import java.util.Optional;
 import java.util.function.Supplier;
 
-import reactor.cache.CacheFlux;
-import reactor.cache.CacheMono;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.Signal;
 
 import com.gbp.rcas.service.CacheService;
 
@@ -24,52 +27,118 @@ public class CacheServiceImpl implements CacheService {
     private static final Logger logger = LoggerFactory.getLogger(CacheServiceImpl.class);
 
     private final CacheManager cacheManager;
+    private final ReactiveHashOperations<String, Long, String> hashOperations;
+    private final ReactiveRedisTemplate<String, String> redisTemplate;
+    private final ObjectMapper objectMapper;
+    private final Duration redisExpiration;
 
-    public CacheServiceImpl(CacheManager cacheManager) {
+    public CacheServiceImpl(CacheManager cacheManager,
+                            ReactiveHashOperations<String, Long, String> hashOperations,
+                            @Qualifier("redisCacheTemplate") ReactiveRedisTemplate<String, String> redisTemplate,
+                            ObjectMapper objectMapper,
+                            @Value("${cache.expiration.hours:24}") long cacheExpirationHours) {
         this.cacheManager = cacheManager;
+        this.hashOperations = hashOperations;
+        this.redisTemplate = redisTemplate;
+        this.objectMapper = objectMapper;
+        this.redisExpiration = Duration.ofHours(cacheExpirationHours);
     }
 
     @Override
     public <T> Mono<T> getCache(Long id, String cacheName, Supplier<Mono<T>> retriever, Class<T> cls) {
-
         Cache cache = cacheManager.getCache(cacheName);
-        return CacheMono.lookup(key -> Mono.justOrEmpty(cache.get(id, cls))
-                .map(Signal::next), id)
-                .onCacheMissResume(() -> {
-                    logger.info("{} was not found into cache by id: {}", cls.getName(), id);
-                    return retriever.get();
-                })
-                .andWriteWith((key, signal) -> Mono.fromRunnable(() ->
-                        Optional.ofNullable(signal.get())
-                                .ifPresent(value -> cache.put(key, value))));
+        return Mono.defer(() -> Mono.justOrEmpty(cache.get(id, cls))
+                        .flatMap(value -> refreshRedisExpiration(redisKey(cacheName, id)).thenReturn(value)))
+                .switchIfEmpty(Mono.defer(() -> readFromRedis(id, cacheName, cls)))
+                .switchIfEmpty(Mono.defer(() -> {
+                    logger.info("{} was not found in cache by id: {}", cls.getName(), id);
+                    return retriever.get()
+                            .flatMap(value -> writeToRedis(id, cacheName, value)
+                                    .thenReturn(value));
+                }))
+                .doOnNext(value -> cache.put(id, value));
     }
 
     @Override
-    public <T> Flux<T> getCache(Long id, String cacheName, Supplier<Flux<T>> retriever) {
+    public <T> Flux<T> getCache(Long id, String cacheName, Class<T> cls, Supplier<Flux<T>> retriever) {
         Cache cache = cacheManager.getCache(cacheName);
-        return CacheFlux
-                .lookup(k -> {
-                    List<T> result = cache.get(k, List.class);
-                    return Mono.justOrEmpty(result)
-                            .flatMap(list -> Flux.fromIterable(list).materialize().collectList());
-                }, id)
-                .onCacheMissResume(() -> {
-                    logger.info("{} was not found into cache by id: {}", cacheName, id);
-                    return Flux.defer(retriever);
+        return Mono.defer(() -> {
+                    Object cachedValue = cache.get(id, Object.class);
+                    if (cachedValue instanceof List<?> values) {
+                        return Mono.just(values.stream().map(cls::cast).toList())
+                                .flatMap(cachedValues -> refreshRedisExpiration(redisKey(cacheName, id))
+                                        .thenReturn(cachedValues));
+                    }
+                    return Mono.empty();
                 })
-                .andWriteWith((k, signalList) -> Flux.fromIterable(signalList)
-                        .dematerialize()
-                        .collectList()
-                        .doOnNext(list -> {
-                            cache.put(k, list);
-                        })
-                        .then());
+                .switchIfEmpty(Mono.defer(() -> readListFromRedis(id, cacheName, cls)
+                        .doOnNext(values -> cache.put(id, values))))
+                .switchIfEmpty(Mono.defer(() -> {
+                    logger.info("{} was not found in cache by id: {}", cacheName, id);
+                    return Flux.defer(retriever).collectList()
+                            .flatMap(values -> writeToRedis(id, cacheName, values)
+                                    .thenReturn(values));
+                }))
+                .doOnNext(values -> cache.put(id, values))
+                .flatMapMany(Flux::fromIterable);
     }
 
+    private <T> Mono<T> readFromRedis(Long id, String cacheName, Class<T> cls) {
+        String redisKey = redisKey(cacheName, id);
+        return hashOperations.get(redisKey, id)
+                .flatMap(json -> deserialize(json, cls))
+                .flatMap(value -> refreshRedisExpiration(redisKey).thenReturn(value))
+                .onErrorResume(error -> {
+                    logger.warn("Redis cache lookup failed for {}", redisKey, error);
+                    return Mono.empty();
+                });
+    }
 
+    private <T> Mono<List<T>> readListFromRedis(Long id, String cacheName, Class<T> cls) {
+        String redisKey = redisKey(cacheName, id);
+        return hashOperations.get(redisKey, id)
+                .flatMap(json -> deserializeList(json, cls))
+                .flatMap(values -> refreshRedisExpiration(redisKey).thenReturn(values))
+                .onErrorResume(error -> {
+                    logger.warn("Redis cache lookup failed for {}", redisKey, error);
+                    return Mono.empty();
+                });
+    }
 
+    private Mono<Void> writeToRedis(Long id, String cacheName, Object value) {
+        String redisKey = redisKey(cacheName, id);
+        return serialize(value)
+                .flatMap(json -> hashOperations.put(redisKey, id, json))
+                .then(refreshRedisExpiration(redisKey))
+                .onErrorResume(error -> {
+                    logger.warn("Redis cache write failed for {}", redisKey, error);
+                    return Mono.empty();
+                });
+    }
 
+    private String redisKey(String cacheName, Long id) {
+        return cacheName + ":" + id;
+    }
 
+    private Mono<Void> refreshRedisExpiration(String redisKey) {
+        return redisTemplate.expire(redisKey, redisExpiration)
+                .then()
+                .onErrorResume(error -> {
+                    logger.warn("Redis cache expiration update failed for {}", redisKey, error);
+                    return Mono.empty();
+                });
+    }
 
+    private <T> Mono<String> serialize(T value) {
+        return Mono.fromCallable(() -> objectMapper.writeValueAsString(value));
+    }
+
+    private <T> Mono<T> deserialize(String json, Class<T> cls) {
+        return Mono.fromCallable(() -> objectMapper.readValue(json, cls));
+    }
+
+    private <T> Mono<List<T>> deserializeList(String json, Class<T> cls) {
+        var listType = objectMapper.getTypeFactory().constructCollectionType(List.class, cls);
+        return Mono.fromCallable(() -> objectMapper.readValue(json, listType));
+    }
 }
-
