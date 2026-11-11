@@ -61,12 +61,12 @@ content. PR-creation privilege is isolated in the latter workflow/job. `COPILOT_
 environment variable on the trusted PR helper step, never to checkout or any step that runs untrusted content. The helper
 uses it only for the `POST /pulls` that creates a new PR, so GitHub starts the required CI checks; reads, bot-authored recovery
 markers, existing-PR validation and guarded intake use the workflow `GITHUB_TOKEN`. Reused PRs do not require the Copilot token.
-It accepts a push only when the authoritative event sender is the expected Copilot bot verified against the GitHub Users API
-and the feature branch has the issue-number prefix.
+Its secret-bearing path is schedule-only on the trusted default branch (there is no feature-branch `push` trigger); it
+validates the expected Copilot actor against the GitHub Users API and checks the feature branch has the issue-number prefix.
 It also requires the open issue opt-in, `implementation` task state, Engineer dispatch, and design-note/approval guards. The
-five-minute schedule recovers an interrupted create/intake using only an unedited bot-authored marker bound to the issue, actor
-and current branch SHA. The dispatch workflow `GITHUB_TOKEN` inspects event targets and records bounded CI fix attempts,
-human-review labels and escalation comments; it uses
+five-minute default-branch schedule recovers an interrupted create/intake using only an unedited bot-authored marker bound
+to the issue, actor and current branch SHA. The dispatch workflow `GITHUB_TOKEN` inspects event targets and records bounded
+CI fix attempts, human-review labels and escalation comments; it uses
 `COPILOT_AGENT_TOKEN` only for the GitHub GraphQL Copilot assignment API, because that API requires a user-to-server token and does not accept the Actions installation token.
 The dispatch token is not passed to the merge workflow.
 Auto-merge checks the current PR head, linked `agent-read` issue, all required status/check contexts plus Definition of

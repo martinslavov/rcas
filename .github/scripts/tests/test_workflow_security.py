@@ -55,7 +55,6 @@ class WorkflowSecurityTest(unittest.TestCase):
         job = _jobs(text)["create-pr"]
 
         self.assertIn("permissions: {}", text.split("jobs:", 1)[0])
-        self.assertIn("      - \"feature/**\"", text)
         self.assertIn("cron: \"*/5 * * * *\"", text)
         self.assertIn("queue: max", text)
         self.assertIn("contents: read", job)
@@ -80,6 +79,27 @@ class WorkflowSecurityTest(unittest.TestCase):
         helper = (ROOT / "scripts" / "cloud_agent_pr.py").read_text(encoding="utf-8")
         self.assertNotIn("shell=True", helper)
         self.assertNotIn("os.system", helper)
+
+    def test_cloud_pr_creation_if_expression_uses_single_quoted_literals(self):
+        text = (ROOT / "workflows" / "ci-agent-pr-creation.yml").read_text(encoding="utf-8")
+        expressions = re.findall(r"(?m)^\s+if:\s*(.+)$", text)
+
+        self.assertEqual(1, len(expressions))
+        condition = expressions[0]
+        self.assertNotRegex(condition, r'"[^"]*"')
+        self.assertRegex(
+            condition,
+            r"^github\.ref == format\('refs/heads/\{0\}', github\.event\.repository\.default_branch\)$",
+        )
+
+    def test_cloud_pr_creation_secret_path_has_no_branch_controlled_trigger(self):
+        text = (ROOT / "workflows" / "ci-agent-pr-creation.yml").read_text(encoding="utf-8")
+        triggers = text.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+        trigger_names = re.findall(r"(?m)^  ([A-Za-z_]+):", triggers)
+
+        self.assertEqual(["schedule"], trigger_names)
+        self.assertIn("COPILOT_AGENT_TOKEN: ${{ secrets.COPILOT_AGENT_TOKEN }}", text)
+        self.assertIn("ref: ${{ github.event.repository.default_branch }}", text)
 
     def test_no_privileged_untrusted_triggers(self):
         for path in WORKFLOWS:

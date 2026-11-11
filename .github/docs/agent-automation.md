@@ -17,13 +17,17 @@ the issue with `agent-read`, never copying the TAG line into the title/body. Pla
 `LABEL:BACKLOG,TASK-NAME:` retains its backlog behavior.
 
 For the cloud path, the Engineer pushes `feature/<issue-number>-<task-name-slug>`. The isolated `ci-agent-pr-creation.yml`
-workflow checks the trusted push sender against the GitHub user API, validates branch-to-issue numbering, open issue and
-`agent-read` label, implementation task state and Engineer dispatch, and required Architect approval. It checks out only the
-trusted default branch. The helper checks and reuses an existing conforming PR with the workflow `GITHUB_TOKEN`; for a new PR,
-its single trusted helper step uses `COPILOT_AGENT_TOKEN` only for PR creation (so required CI checks trigger), then uses
+workflow runs only from its trusted default-branch five-minute schedule; feature-branch pushes cannot execute its workflow
+YAML with access to `COPILOT_AGENT_TOKEN`. The helper checks queued authorization records and validates the expected actor
+against the GitHub user API, feature-branch-to-issue numbering, the open issue and `agent-read` label, implementation task
+state, Engineer dispatch, and required Architect approval. It checks out only the trusted default branch. The helper
+reuses a conforming PR with the workflow `GITHUB_TOKEN`; for a new PR, its single trusted helper step uses
+`COPILOT_AGENT_TOKEN` only for PR creation (so required CI checks trigger), then uses
 `GITHUB_TOKEN` for the guarded `orchestrator.py intake-pr-review <issue> --pr <pr> --agent-read`. Intake
 removes issue-level `agent-read`, adds it to the PR, and starts the existing PR Review → QA → merge flow. The Engineer never
-creates a PR.
+creates a PR. For auto-created cloud PRs, `pr-review-agent` owns filling the template's **Acceptance criteria → evidence**
+section from the linked issue and implementation evidence before posting its review; the Engineer's tests and documentation
+are the evidence sources.
 
 For local work or work with an existing implementation branch but no cloud issue flow, use `/ship-pr agent-read` to
 create/reuse the task issue and PR and start directly at PR Review. That skill uses the same PR template, relation and marker.
@@ -48,9 +52,10 @@ Its guarded intake records the PR head SHA and start marker. The PR label starts
    `needs-human-review` to resume a stopped task. After merge it records elapsed time on the issue and PR.
 
 The dispatcher listens for a PR `labeled` event and also polls every five minutes to recover missed dispatches. The cloud
-PR-creation workflow independently polls every five minutes for its bot-authored authorization comments, revalidates the
-current branch SHA and issue guards, and reuses an existing PR if creation succeeded but intake did not. This recovers from
-interrupted creation/intake and GITHUB_TOKEN-authored labels/comments that do not emit follow-up workflow events. It ignores
+PR-creation workflow independently polls every five minutes from the default branch for its bot-authored authorization
+comments, revalidates the current branch SHA and issue guards, and reuses an existing PR if creation succeeded but intake
+did not. This recovers from interrupted creation/intake and GITHUB_TOKEN-authored labels/comments that do not emit
+follow-up workflow events. It ignores
 PRs without the `/ship-pr` marker,
 an open linked task issue, and `agent-read` on the PR. No `pull_request_target` trigger is used (see `security.md`).
 
