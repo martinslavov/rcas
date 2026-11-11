@@ -8,7 +8,13 @@ owner with Metadata read and Actions, Contents, Issues, and Pull requests read/w
 repository Actions secret `COPILOT_AGENT_TOKEN` under **Settings → Secrets and variables → Actions**. The workflow fails
 with an actionable message if the secret is missing when a dispatch is requested. Do not put tokens in issue text.
 
-The `agent-read` repository label is the opt-in switch. Create an issue using the normal issue template, include
+The `agent-read` repository label is the opt-in switch. It is read on the issue (starts the Architect/Engineer stages) or on the PR (enables the PR Review → QA → DoD → merge stages for the linked issue); either level is sufficient for PR stages.
+When a PR that references an `agent-read` issue (`Closes #N`) is opened, reopened or edited, the dispatch workflow copies
+the label to the PR automatically (`pull_request_target`, trusted default-branch code only).
+
+**Latency:** labels added by `GITHUB_TOKEN` do not trigger workflows, and a label added manually to a PR only is not an
+event the dispatcher reacts to. In both cases the next stage starts at the nearest five-minute poll (`*/5 * * * *`), not
+immediately. Status and check-suite events still dispatch the following stages immediately. Create an issue using the normal issue template, include
 acceptance criteria, then apply `agent-read` to start the flow:
 
 1. `architect-agent` posts a design note or auditable skip. If approval is required, the workflow waits for the repository
@@ -21,7 +27,7 @@ acceptance criteria, then apply `agent-read` to start the flow:
    The dispatcher also polls every five minutes to recover if a GitHub Actions-generated check event is not delivered.
    CI fix attempts are recorded on the PR across commit SHAs; a third failed attempt or a repeated failure signature
    adds `needs-human-review`, notifies the repository owner, and stops further dispatch until a human removes the label.
-4. `ci-agent-auto-merge.yml` merges only an open PR linked to an `agent-read` issue when all ruleset-required checks,
+4. `ci-agent-auto-merge.yml` merges only an open PR linked to an issue, where the issue or the PR has `agent-read`, when all ruleset-required checks,
    `PR Review`, `QA Agent`, and `Definition of Done` succeed on the current head SHA and there are no human PR comments
    or reviews. It also checks `needs-human-review`. A five-minute poll handles check completion; a human can remove
    `needs-human-review` to resume a stopped task. After merge it records elapsed time on the issue and PR.

@@ -277,11 +277,32 @@ def _task_issue_for_pr(api: GitHub, pr: dict[str, Any]) -> dict[str, Any] | None
     if number is None:
         return None
     issue = api.request("GET", f"/repos/{api.repository}/issues/{number}")
-    if issue.get("state") != "open" or ENTRY_LABEL not in _labels(issue):
+    if issue.get("state") != "open" or ENTRY_LABEL not in (_labels(issue) | _labels(pr)):
         return None
     if HUMAN_REVIEW_LABEL in _labels(issue) or HUMAN_REVIEW_LABEL in _labels(pr):
         return None
     return issue
+
+
+def sync_entry_label(api: GitHub, event: dict[str, Any]) -> bool:
+    """Copy `agent-read` from the linked open task issue to its PR."""
+    pr = event.get("pull_request") or {}
+    number = pr.get("number")
+    if (
+        not number
+        or pr.get("state") != "open"
+        or pr.get("base", {}).get("ref") != "main"
+        or ENTRY_LABEL in _labels(pr)
+    ):
+        return False
+    issue_number = _linked_issue_number(pr.get("body") or "")
+    if issue_number is None:
+        return False
+    issue = api.request("GET", f"/repos/{api.repository}/issues/{issue_number}")
+    if issue.get("state") != "open" or ENTRY_LABEL not in _labels(issue):
+        return False
+    api.request("POST", f"/repos/{api.repository}/issues/{number}/labels", {"labels": [ENTRY_LABEL]})
+    return True
 
 
 def _dispatch_from_status(event: dict[str, Any], api: GitHub) -> list[Dispatch]:
@@ -843,6 +864,9 @@ def main() -> int:
         if not read_token:
             raise AutomationError("GITHUB_TOKEN is required to inspect the event")
         read_api = GitHub(read_token, repository)
+        if event_name == "pull_request_target":
+            sync_entry_label(read_api, event)
+            return 0
         for dispatch in get_dispatches(event_name, event, read_api):
             agent_token = os.environ.get("COPILOT_AGENT_TOKEN")
             if not agent_token:
