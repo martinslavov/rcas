@@ -16,7 +16,7 @@ Every workflow sets `permissions: {}` at the top level; each job declares only t
 | `ci-dependency-review.yml` | `dependency-review` | `contents: read` | none |
 | `ci-code-review.yml` (CodeQL) | `analyze` | `contents: read`, `actions: read`, `security-events: write` | none |
 | `ci-agent-dashboard.yml` | `update-dashboard` | `contents: read`, `pull-requests: read`, `issues: write` | none |
-| `ci-agent-dispatch.yml` | `dispatch` | `contents: read`, `issues: read`, `pull-requests: read`, `checks: read`, `statuses: read` | `COPILOT_AGENT_TOKEN` (agent assignment step only) |
+| `ci-agent-dispatch.yml` | `dispatch` | `contents: read`, `issues: write`, `pull-requests: read`, `checks: read`, `statuses: read` | `COPILOT_AGENT_TOKEN` (agent assignment step only) |
 | `ci-agent-auto-merge.yml` | `merge` | `contents: write`, `issues: write`, `pull-requests: write`, `checks: read`, `statuses: read` | none |
 | `ci-pr-issue-tracking.yml` | `create-issue` | `contents: read`, `issues: write`, `pull-requests: write` | `PROJECT_TOKEN` (board step only) |
 | `ci-pr-issue-close.yml` | `close-issue` | `contents: read`, `issues: write`, `pull-requests: read` | `PROJECT_TOKEN` (board step only) |
@@ -56,8 +56,8 @@ existing jar assets are not replaced. `latest` and `dockerhub-latest` independen
 release and point their registry aliases to that exact manifest.
 
 The agent dispatcher checks out only the trusted default branch and never executes issue or PR content. Its
-`GITHUB_TOKEN` is read-only and inspects event targets; it uses `COPILOT_AGENT_TOKEN` only for the GitHub GraphQL Copilot
-assignment API, because that API requires a user-to-server token and does not accept the Actions installation token.
+`GITHUB_TOKEN` inspects event targets and records bounded CI fix attempts, human-review labels and escalation comments; it uses
+`COPILOT_AGENT_TOKEN` only for the GitHub GraphQL Copilot assignment API, because that API requires a user-to-server token and does not accept the Actions installation token.
 The dispatch token is not passed to the merge workflow.
 Auto-merge checks the current PR head, linked `agent-read` issue, all required status/check contexts plus Definition of
 Done, the `needs-human-review` label, and human PR comments/reviews before calling the merge API. The merge job checks out

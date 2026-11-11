@@ -37,12 +37,13 @@ class FakeGitHub:
         ]
         self.check_runs = [
             {
+                "id": index,
                 "name": name,
                 "status": "completed",
                 "conclusion": "success",
                 "completed_at": "2026-01-01T00:00:00Z",
             }
-            for name in REQUIRED_CHECKS
+            for index, name in enumerate(REQUIRED_CHECKS, start=1)
             if name not in {"PR Review", "QA Agent"}
         ]
         self.comments = [
@@ -62,6 +63,8 @@ class FakeGitHub:
     def pages(self, path):
         if "/issues?" in path:
             return [self.issue]
+        if path.endswith("/issues/43/comments"):
+            return self.comments
         if path.endswith("/issues/42/comments"):
             return self.issue_comments
         if path.endswith("/pulls") or "/pulls?" in path:
@@ -71,15 +74,27 @@ class FakeGitHub:
         return []
 
     def request(self, method, path, body=None):
+        if method == "POST" and path.endswith("/issues/43/comments"):
+            self.comments.append(
+                {
+                    "body": body["body"],
+                    "user": {"login": "github-actions[bot]", "type": "Bot"},
+                    "created_at": f"2026-01-01T00:00:{len(self.comments):02d}Z",
+                }
+            )
+            return self.comments[-1]
+        if method == "POST" and path.endswith("/issues/43/labels"):
+            self.pr["labels"] = [{"name": name} for name in body["labels"]]
+            return self.pr["labels"]
         if path.endswith("/pulls/43") and method == "GET":
             return self.pr
         if path.endswith("/issues/42") and method == "GET":
             return self.issue
         if path.endswith("/issues/43/labels") and method == "GET":
             return self.pr["labels"]
-        if path.endswith("/commits/" + "a" * 40 + "/status") and method == "GET":
+        if path.startswith("/repos/martinslavov/rcas/commits/") and path.endswith("/status") and method == "GET":
             return {"statuses": self.statuses}
-        if "/commits/" + "a" * 40 + "/check-runs?" in path and method == "GET":
+        if "/check-runs?" in path and method == "GET":
             return {"check_runs": self.check_runs}
         if path.endswith("/pulls/43/merge") and method == "PUT":
             self.merged = True
@@ -90,6 +105,20 @@ class FakeGitHub:
 
 
 class CopilotDispatchTest(unittest.TestCase):
+    @staticmethod
+    def add_ci_attempt(api, number, sha, signature, second=0):
+        api.comments.append(
+            {
+                "body": (
+                    f"<!-- ci-fix-attempt:{number} -->\n"
+                    f"<!-- ci-failure-signature:{signature} -->\n"
+                    f"<!-- ci-fix-state:{sha}:{'f' * 64} -->"
+                ),
+                "user": {"login": "github-actions[bot]", "type": "Bot"},
+                "created_at": f"2026-01-01T00:01:{second:02d}Z",
+            }
+        )
+
     def test_agent_read_label_starts_architect(self):
         event = {
             "action": "labeled",
@@ -186,6 +215,10 @@ class CopilotDispatchTest(unittest.TestCase):
     def test_failed_required_ci_check_dispatches_engineer(self):
         api = FakeGitHub()
         api.check_runs[0]["conclusion"] = "failure"
+        api.check_runs[0]["output"] = {
+            "title": "Unit tests failed",
+            "text": "FAILED: CacheServiceTest.expiresAfterTtl",
+        }
         event = {
             "action": "completed",
             "check_suite": {"head_sha": "a" * 40, "conclusion": "failure"},
@@ -194,6 +227,56 @@ class CopilotDispatchTest(unittest.TestCase):
             [Dispatch("pull", 43, "senior-java-software-engineer", "a" * 40)],
             get_dispatches("check_suite", event, api),
         )
+        self.assertIn("<!-- ci-fix-attempt:1 -->", api.comments[-1]["body"])
+        self.assertIn("<!-- ci-failure-signature:unit-tests|FAILED: CacheServiceTest.expiresAfterTtl -->", api.comments[-1]["body"])
+
+    def test_check_suite_stops_at_attempt_limit_across_head_shas(self):
+        api = FakeGitHub()
+        for attempt in range(1, 4):
+            self.add_ci_attempt(api, attempt, f"{attempt:x}" * 40, f"unit-tests|failure-{attempt}", attempt)
+        api.check_runs[0]["conclusion"] = "failure"
+        api.check_runs[0]["id"] = 20
+        sha = "a" * 40
+        event = {"action": "completed", "check_suite": {"head_sha": sha, "conclusion": "failure"}}
+
+        self.assertEqual([], get_dispatches("check_suite", event, api))
+        self.assertEqual({HUMAN_REVIEW_LABEL}, {item["name"] for item in api.pr["labels"]})
+        self.assertIn("@martinslavov", api.comments[-1]["body"])
+        self.assertIn("attempt limit was reached", api.comments[-1]["body"])
+
+    def test_check_suite_stops_on_repeated_failure_signature_on_new_sha(self):
+        api = FakeGitHub()
+        self.add_ci_attempt(api, 1, "b" * 40, "unit-tests|AssertionError: expected true", 1)
+        api.check_runs[0]["conclusion"] = "failure"
+        api.check_runs[0]["id"] = 20
+        api.check_runs[0]["output"] = {"text": "AssertionError: expected true"}
+        event = {
+            "action": "completed",
+            "check_suite": {"head_sha": "a" * 40, "conclusion": "failure"},
+        }
+
+        self.assertEqual([], get_dispatches("check_suite", event, api))
+        self.assertEqual({HUMAN_REVIEW_LABEL}, {item["name"] for item in api.pr["labels"]})
+        self.assertIn("failure signature repeated", api.comments[-1]["body"])
+
+    def test_schedule_stops_ci_retry_at_limit_across_head_shas(self):
+        api = FakeGitHub()
+        sha = "b" * 40
+        api.pr["head"]["sha"] = sha
+        api.issue_comments.extend(
+            [
+                {"body": Dispatch("issue", 42, "architect-agent").marker},
+                {"body": Dispatch("issue", 42, "senior-java-software-engineer").marker},
+            ]
+        )
+        for attempt in range(1, 4):
+            self.add_ci_attempt(api, attempt, f"{attempt:x}" * 40, f"unit-tests|failure-{attempt}", attempt)
+        api.check_runs[0]["conclusion"] = "failure"
+        api.check_runs[0]["id"] = 20
+
+        self.assertEqual([], get_dispatches("schedule", {}, api))
+        self.assertEqual({HUMAN_REVIEW_LABEL}, {item["name"] for item in api.pr["labels"]})
+        self.assertIn("attempt limit was reached", api.comments[-1]["body"])
 
     def test_removing_human_review_label_resumes_engineer_once(self):
         api = FakeGitHub()

@@ -361,7 +361,7 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertIn("permissions: {}", text)
         self.assertIn("check_suite:\n    types: [completed]", text)
         job = _jobs(text)["dispatch"]
-        for permission in ("contents: read", "issues: read", "pull-requests: read", "checks: read", "statuses: read"):
+        for permission in ("contents: read", "issues: write", "pull-requests: read", "checks: read", "statuses: read"):
             with self.subTest(permission=permission):
                 self.assertIn(permission, job)
         self.assertIn("ref: ${{ github.event.repository.default_branch }}", job)

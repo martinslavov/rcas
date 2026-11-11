@@ -19,6 +19,8 @@ acceptance criteria, then apply `agent-read` to start the flow:
 3. `pr-review-agent`, `senior-qa-engineer`, and `dod-validator-agent` are dispatched in order from the corresponding
    status changes. Failed agent gates or required CI checks dispatch the Engineer for a bounded fix iteration.
    The dispatcher also polls every five minutes to recover if a GitHub Actions-generated check event is not delivered.
+   CI fix attempts are recorded on the PR across commit SHAs; a third failed attempt or a repeated failure signature
+   adds `needs-human-review`, notifies the repository owner, and stops further dispatch until a human removes the label.
 4. `ci-agent-auto-merge.yml` merges only an open PR linked to an `agent-read` issue when all ruleset-required checks,
    `PR Review`, `QA Agent`, and `Definition of Done` succeed on the current head SHA and there are no human PR comments
    or reviews. It also checks `needs-human-review`. A five-minute poll handles check completion; a human can remove

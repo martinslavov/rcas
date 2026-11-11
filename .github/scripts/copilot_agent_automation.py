@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -21,6 +22,7 @@ API_VERSION = "2022-11-28"
 ENTRY_LABEL = "agent-read"
 HUMAN_REVIEW_LABEL = "needs-human-review"
 ARCHITECTURE_APPROVAL_LABEL = "architecture-approval-required"
+CI_FIX_ATTEMPT_LIMIT = 3
 REQUIRED_CHECKS = (
     "unit-tests",
     "Component Tests (make up && make component-tests)",
@@ -59,10 +61,16 @@ AGENT_COMMENT_MARKERS = (
     "<!-- qa-round:",
     "<!-- dod-round:",
     "<!-- dod-validation sha:",
+    "<!-- ci-fix-attempt:",
+    "<!-- ci-failure-signature:",
+    "<!-- ci-fix-state:",
     "<!-- copilot-agent-dispatch:",
     "<!-- agent-automation-start:",
 )
 START_EPOCH_RE = re.compile(r"<!-- agent-automation-start:(\d+) -->")
+CI_FIX_ATTEMPT_RE = re.compile(r"<!-- ci-fix-attempt:(\d+) -->")
+CI_FAILURE_SIGNATURE_RE = re.compile(r"<!-- ci-failure-signature:([^\r\n]*?) -->")
+CI_FIX_STATE_RE = re.compile(r"<!-- ci-fix-state:([0-9a-f]{40}):([0-9a-f]{64}) -->")
 
 
 class AutomationError(RuntimeError):
@@ -295,6 +303,144 @@ def _dispatch_from_status(event: dict[str, Any], api: GitHub) -> list[Dispatch]:
     return dispatches
 
 
+def _failed_ci_runs(check_runs: list[dict[str, Any]], ci_checks: tuple[str, ...]) -> list[dict[str, Any]]:
+    failed: list[dict[str, Any]] = []
+    for name in ci_checks:
+        matching = [run for run in check_runs if run.get("name") == name]
+        matching.sort(
+            key=lambda run: run.get("completed_at") or run.get("started_at") or run.get("created_at") or ""
+        )
+        if matching and (matching[-1].get("conclusion") or "").lower() in {
+            "failure", "timed_out", "cancelled",
+        }:
+            failed.append(matching[-1])
+    return failed
+
+
+def _normalized_failure_line(run: dict[str, Any]) -> str:
+    output = run.get("output") or {}
+    text = output.get("text") or ""
+    lines = [line.strip().lstrip(">#*- ").strip() for line in text.splitlines()]
+    lines = [line for line in lines if line]
+    failure_line = next(
+        (
+            line for line in lines
+            if re.search(r"\b(fail(?:ed|ure)?|error|exception|assertion|timed out|cancelled)\b", line, re.I)
+        ),
+        output.get("title") or (lines[0] if lines else "failure details unavailable"),
+    )
+    failure_line = re.sub(r"\b\d{4}-\d\d-\d\d[T ][0-9:.+-]+Z?\b", "<timestamp>", failure_line)
+    failure_line = re.sub(r"(?:[A-Za-z]:)?/(?:[^\s/:]+/)+[^\s/:]+", "<path>", failure_line)
+    failure_line = re.sub(r"\b(?:line|column)\s+\d+\b", "<location>", failure_line, flags=re.I)
+    failure_line = re.sub(r":\d+(?::\d+)?\b", ":<line>", failure_line)
+    failure_line = failure_line.replace("-->", "").replace("\r", " ").replace("\n", " ")
+    return re.sub(r"\s+", " ", failure_line).strip()[:240] or "failure details unavailable"
+
+
+def _ci_failure_signature(failed_runs: list[dict[str, Any]]) -> str:
+    if not failed_runs:
+        raise AutomationError("Cannot create a CI failure signature without failed checks")
+    run = failed_runs[0]
+    detail = _normalized_failure_line(run)
+    signature = f"{run.get('name', 'unknown check')}|{detail}"
+    if re.search(r"runner|infrastructure|network|registry|rate limit|service unavailable|connection reset", detail, re.I):
+        signature = f"infra:{signature}"
+    return signature.replace("-->", "")[:300]
+
+
+def _ci_fix_state_key(sha: str, failed_runs: list[dict[str, Any]]) -> str:
+    run_ids = sorted(
+        str(run.get("id") or run.get("completed_at") or run.get("name", ""))
+        for run in failed_runs
+    )
+    fingerprint = hashlib.sha256("\n".join(run_ids).encode()).hexdigest()
+    return f"<!-- ci-fix-state:{sha}:{fingerprint} -->"
+
+
+def _ci_attempt_records(api: GitHub, pr_number: int) -> list[tuple[int, str, str]]:
+    comments = api.pages(f"/repos/{api.repository}/issues/{pr_number}/comments")
+    comments.sort(key=lambda comment: comment.get("created_at") or "")
+    records: list[tuple[int, str, str]] = []
+    for comment in comments:
+        body = comment.get("body") or ""
+        attempt = CI_FIX_ATTEMPT_RE.search(body)
+        signature = CI_FAILURE_SIGNATURE_RE.search(body)
+        state = CI_FIX_STATE_RE.search(body)
+        if attempt and signature and state:
+            records.append((int(attempt.group(1)), signature.group(1), state.group(0)))
+    return records
+
+
+def _stop_ci_fix_loop(
+    api: GitHub,
+    pr_number: int,
+    attempt_count: int,
+    signature: str,
+    failed_run: dict[str, Any],
+    reason: str,
+) -> None:
+    api.request(
+        "POST",
+        f"/repos/{api.repository}/issues/{pr_number}/labels",
+        {"labels": [HUMAN_REVIEW_LABEL]},
+    )
+    run_url = failed_run.get("html_url") or "unavailable"
+    excerpt = _normalized_failure_line(failed_run)
+    api.request(
+        "POST",
+        f"/repos/{api.repository}/issues/{pr_number}/comments",
+        {
+            "body": (
+                f"@{api.owner} CI automation stopped and requires human review: {reason}. "
+                f"Check: `{failed_run.get('name', 'unknown check')}`; run: {run_url}; "
+                f"signature: `{signature}`; attempts: {attempt_count}. "
+                f"Failure excerpt: `{excerpt}`. The `needs-human-review` label has been applied."
+            )
+        },
+    )
+    print(f"PR #{pr_number} CI fix loop stopped after {attempt_count} attempt(s): {reason}")
+
+
+def _ci_fix_dispatch(
+    api: GitHub,
+    pr: dict[str, Any],
+    sha: str,
+    failed_runs: list[dict[str, Any]],
+) -> Dispatch | None:
+    number = pr["number"]
+    if not failed_runs or _task_issue_for_pr(api, pr) is None:
+        return None
+
+    state_key = _ci_fix_state_key(sha, failed_runs)
+    attempts = _ci_attempt_records(api, number)
+    if any(record[2] == state_key for record in attempts):
+        return Dispatch("pull", number, "senior-java-software-engineer", sha)
+
+    signature = _ci_failure_signature(failed_runs)
+    attempt_count = len(attempts)
+    previous_signature = attempts[-1][1] if attempts else None
+    if previous_signature == signature:
+        _stop_ci_fix_loop(api, number, attempt_count, signature, failed_runs[0], "the failure signature repeated")
+        return None
+    if attempt_count >= CI_FIX_ATTEMPT_LIMIT:
+        _stop_ci_fix_loop(api, number, attempt_count, signature, failed_runs[0], "the CI fix attempt limit was reached")
+        return None
+
+    next_attempt = attempt_count + 1
+    excerpt = _normalized_failure_line(failed_runs[0])
+    run_url = failed_runs[0].get("html_url") or "unavailable"
+    body = (
+        f"<!-- ci-fix-attempt:{next_attempt} -->\n"
+        f"<!-- ci-failure-signature:{signature} -->\n"
+        f"{state_key}\n"
+        f"CI fix attempt {next_attempt}: `{failed_runs[0].get('name', 'unknown check')}` failed on "
+        f"`{sha}`. Run: {run_url}. Failure excerpt: `{excerpt}`."
+    )
+    api.request("POST", f"/repos/{api.repository}/issues/{number}/comments", {"body": body})
+    print(f"Recorded CI fix attempt {next_attempt} for PR #{number}")
+    return Dispatch("pull", number, "senior-java-software-engineer", sha)
+
+
 def _dispatch_from_check_suite(event: dict[str, Any], api: GitHub) -> list[Dispatch]:
     suite = event.get("check_suite") or {}
     if event.get("action") != "completed" or suite.get("conclusion") not in {
@@ -306,18 +452,15 @@ def _dispatch_from_check_suite(event: dict[str, Any], api: GitHub) -> list[Dispa
         return []
     ci_checks = tuple(name for name in REQUIRED_CHECKS if name not in {"PR Review", "QA Agent"})
     check_runs = _check_runs(api, sha)
-    failures = {
-        name
-        for name in ci_checks
-        if _latest_check_result(check_runs, [], name)[0] in {"failure", "timed_out", "cancelled"}
-    }
-    if not failures:
-        return []
-    return [
-        Dispatch("pull", pr["number"], "senior-java-software-engineer", sha)
-        for pr in _candidate_prs(api, sha)
-        if pr.get("head", {}).get("sha") == sha and _task_issue_for_pr(api, pr) is not None
-    ]
+    failed_runs = _failed_ci_runs(check_runs, ci_checks)
+    dispatches = []
+    for pr in _candidate_prs(api, sha):
+        if pr.get("head", {}).get("sha") != sha:
+            continue
+        dispatch = _ci_fix_dispatch(api, pr, sha, failed_runs)
+        if dispatch is not None:
+            dispatches.append(dispatch)
+    return dispatches
 
 
 def _dispatch_from_schedule(api: GitHub) -> list[Dispatch]:
@@ -362,11 +505,9 @@ def _dispatch_from_schedule(api: GitHub) -> list[Dispatch]:
                     continue
 
         check_runs = _check_runs(api, sha)
-        if any(
-            _latest_check_result(check_runs, [], name)[0] in {"failure", "timed_out", "cancelled"}
-            for name in ci_checks
-        ):
-            result.append(Dispatch("pull", pr["number"], "senior-java-software-engineer", sha))
+        dispatch = _ci_fix_dispatch(api, pr, sha, _failed_ci_runs(check_runs, ci_checks))
+        if dispatch is not None:
+            result.append(dispatch)
     return result
 
 
