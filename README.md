@@ -225,7 +225,7 @@ git push origin v1.0.0
 Recommended repository settings:
 
 - Settings → Actions → General → Workflow permissions: allow workflows to create issues and pull request comments (the PR Issue Tracking workflow also declares its permissions in the YAML).
-- Branch protection / rulesets for `main`: `Main protection` currently requires `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review`, `secret-scan` and `PR Review`. `PR Review` must succeed on the current head SHA before QA or merge. **No agent may merge unless every ruleset-required check and all agent statuses (`PR Review`, `QA Agent`, `Definition of Done`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge). `Definition of Done` is validated after QA and joins the ruleset after it has reported once.
+- Branch protection / rulesets for `main`: `Main protection` currently requires `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review`, `secret-scan` and `PR Review`. `PR Review` must succeed on the current head SHA before QA or merge. **No agent may merge unless every ruleset-required check and the agent statuses (`PR Review`, `QA Agent`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge). `Definition of Done` is manual only, stays visible on the PR and is not a required check.
 - Security: secret scanning, push protection, Dependabot alerts and security updates enabled. The `Branch naming` ruleset excludes `dependabot/**` so Dependabot can create its branches.
 - Repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (read-only): used for Docker Hardened Images (`dhi.io`) pulls by CI Component Tests, CI Sanity Tests and the release image build. Add a separate `DOCKERHUB_PUSH_TOKEN` Docker Hub PAT with Read, Write & Delete permissions for release publication, `latest` and retention pruning; the workflow fails with an actionable error if it is missing. The owner must make the GHCR package and Docker Hub repository public for anonymous pulls, then manually backfill `v0.1.0` and `v0.1.1` through CI Release.
 - `COPILOT_AGENT_TOKEN`: a user-to-server fine-grained token for Copilot issue assignment; configure it as a repository Actions secret with the permissions in [Agent automation](.github/docs/agent-automation.md). Copilot cloud agent must be enabled for the repository.
@@ -257,15 +257,15 @@ Custom agents live in `.github/agents/`:
 | `senior-java-software-engineer` | Senior Java Software Engineer: implements the issue on a `feature/*` branch, tests it and opens a PR |
 | `pr-review-agent` | Independent PR Reviewer: reads the issue and full diff, posts severity-ranked findings and sets `PR Review`; never changes code |
 | `senior-qa-engineer` | Senior QA Engineer: starts after current-head `PR Review` success, tests the PR, reports bugs and sets `QA Agent` |
-| `dod-validator-agent` | Definition of Done Validator: starts after current-head `QA Agent` success, maps every acceptance criterion to behaviour-verifying evidence, posts the AC → evidence table and sets `Definition of Done`; never changes code |
+| `dod-validator-agent` | Definition of Done Validator: **manual only** (no flow starts it; run it explicitly), maps every acceptance criterion to behaviour-verifying evidence, posts the AC → evidence table and sets `Definition of Done`; never changes code |
 
 Give a task as `TASK-NAME:<name>` followed by the description for the interactive agent workflow. To start an existing, ready issue
 automatically, add the `agent-read` label: Copilot runs Architect first, waits for required human approval when applicable, then
-dispatches Engineer → PR Review → QA → DoD. Required CI failures return the task to Engineer, and successful checks/statuses trigger
+dispatches Engineer → PR Review → QA. Required CI failures return the task to Engineer, and successful checks/statuses trigger
 automatic merge. See [Agent automation](.github/docs/agent-automation.md) for setup and stop/resume behavior.
 
 The interactive workflow is Product Owner → Architect (design note or auditable skip) →
-explicit user approval when required → Engineer → PR Review → QA → DoD → merge → elapsed time recorded on the issue and PR
+explicit user approval when required → Engineer → PR Review → QA → merge → elapsed time recorded on the issue and PR
 (`.github/scripts/post_task_elapsed.sh`). For architecture changes (new module/layer/component or cache
 topology), database schema/migrations, messaging/Kafka, public HTTP API or security changes, the Architect applies
 `architecture-approval-required`; the orchestrator must wait for the user's explicit approval recorded on the issue as
@@ -281,15 +281,15 @@ Inspect or seed an issue state with `python3 .github/scripts/orchestrator.py sta
 The PR Review Agent independently reads the issue, the complete diff and surrounding code, then posts findings using severity
 `blocker`, `major`, `minor` or `nit`, including file and line where known. Blocker/major findings fail `PR Review` and return the
 PR to the engineer; minor/nit findings are reported but do not block QA. QA starts only after `PR Review` is `success` on the
-current head SHA. The engineer sets `PR Review`, `QA Agent` and `Definition of Done` to `pending` immediately after opening the PR and after every
+current head SHA. The engineer sets `PR Review` and `QA Agent` to `pending` (plus the informational `Definition of Done`) immediately after opening the PR and after every
 push. After each fix push, PR Review must succeed on the new head before QA resumes.
 
-After QA succeeds on the current head SHA, the DoD Validator reads the issue linked by `Closes #N`, maps every acceptance criterion
+The DoD Validator is manual only: no workflow, orchestrator stage or agent starts it, and it is not a merge gate. When you run it explicitly, it reads the issue linked by `Closes #N`, maps every acceptance criterion
 to concrete evidence (a test asserting the behaviour, not merely the existence of a class — e.g. cache expiry needs a test asserting
 expiration after the TTL; for docs/process criteria a `file:line` or verified command output), posts the AC → evidence table
 (`<!-- dod-validation sha:<head-sha> -->`, verdicts `met`/`weak`/`missing`) as a PR comment and sets `Definition of Done`
-(`success` only if every criterion is `met`). The PR template has a matching "Acceptance criteria → evidence" section. DoD failure
-rounds use `<!-- dod-round:N -->` markers with the same five-round / `needs-human-review` rule as QA.
+(`success` only if every criterion is `met`). The PR template has a matching "Acceptance criteria → evidence" section. A DoD failure
+is reported to you and does not dispatch the Engineer.
 
 Both review loops are bounded at five failure rounds. Each PR Review report includes `<!-- pr-review-round:N -->`; round numbers
 are derived from all such PR comment markers, not agent memory. On round-5 failure the agent applies `needs-human-review`,
@@ -307,7 +307,7 @@ attempt. If attempt 3 still fails or the same signature appears twice consecutiv
 `needs-human-review` and mentions `@martinslavov` with the check, run URL, signature, count and log excerpt. No agent
 commits or merges while the label is present; only a human removes it to resume, retaining the separate CI, QA and PR
 Review markers. After resumption numeric limits are not reapplied, but a repeated CI signature still stops the loop.
-Auto-merge requires all existing ruleset checks plus `PR Review`, `QA Agent` and `Definition of Done` success on the current head SHA (the latter is added to the ruleset after its first report), no
+Auto-merge requires all existing ruleset checks plus `PR Review` and `QA Agent` success on the current head SHA (`Definition of Done` is not required), no
 `needs-human-review` label, and no human comments or unresolved blocker/major findings. `PR Review` is also a required check in the
 `Main protection` ruleset. Rules are in `.github/copilot-instructions.md`.
 

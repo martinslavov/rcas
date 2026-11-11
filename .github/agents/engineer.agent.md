@@ -51,13 +51,13 @@ at a time, with production-quality code and tests, and finish by opening a pull 
    e.g. cache expiry needs a test asserting the entry is expired after the TTL), a CI check, or for docs/process criteria a
    `file:line` or verified command output.
    Then complete the PR (merging is the default):
-   - Immediately after opening the PR and after every new push (the head SHA changes), set all three agent gates to pending:
+   - Immediately after opening the PR and after every new push (the head SHA changes), set the agent gates to pending (`Definition of Done` is informational, manual only):
      `SHA=$(gh pr view <n> -R martinslavov/rcas --json headRefOid -q .headRefOid)` then
      `gh api -X POST repos/martinslavov/rcas/statuses/$SHA -f state=pending -f context="PR Review" -f description="Waiting for PR review"`
      and
      `gh api -X POST repos/martinslavov/rcas/statuses/$SHA -f state=pending -f context="QA Agent" -f description="Waiting for QA"`
      and
-     `gh api -X POST repos/martinslavov/rcas/statuses/$SHA -f state=pending -f context="Definition of Done" -f description="Waiting for DoD validation"`.
+     `gh api -X POST repos/martinslavov/rcas/statuses/$SHA -f state=pending -f context="Definition of Done" -f description="Manual only - not run by flows"` (informational; DoD is manual only).
    - Hand over first to `pr-review-agent`, which independently reads the issue and full diff, posts severity-ranked findings and
      sets `PR Review` to a final status on the current head SHA. Do not start QA until this status is `success` on that SHA.
      Minor/nit findings do not block QA. On blocker/major findings, fix them, push, reset all three statuses to pending, and hand back
@@ -66,16 +66,12 @@ at a time, with production-quality code and tests, and finish by opening a pull 
      the label is present; only a human removing it resumes the loop, with markers retained.
    - After PR Review succeeds on the current head SHA, hand over to `senior-qa-engineer`, which tests the PR and sets `QA Agent`
      to `success` or `failure`. After each push reset all three statuses and repeat PR Review before QA.
-   - After QA succeeds on the current head SHA, hand over to `dod-validator-agent`, which maps every acceptance criterion
-     to evidence, posts the AC → evidence table (`<!-- dod-validation sha:<head-sha> -->`) and sets `Definition of Done` to
-     `success` or `failure`. Flow: … → PR Review → QA → DoD → merge. On DoD failure below round 5 add the missing evidence
-     (usually tests), push, reset `PR Review`, `QA Agent` and `Definition of Done` to pending and start again at PR Review.
-     Count DoD rounds with `gh api repos/martinslavov/rcas/issues/<pr>/comments --paginate -q '[.[] | select(.body | contains("<!-- dod-round:"))] | length'`.
-     A round-5 failure is a hard stop with `needs-human-review` (same rule as QA); no further commits or merge until a human removes it.
+   - Do not hand over to `dod-validator-agent`: Definition of Done is manual only and runs just when the user explicitly asks.
+     Flow: … → PR Review → QA → merge. A `Definition of Done` status never blocks merge and a failure of it does not start a fix round.
    - On `failure`, count the QA failure rounds from PR comments, not agent memory. Replace `<pr>` with the PR number:
      `gh api repos/martinslavov/rcas/issues/<pr>/comments --paginate -q '[.[] | select(.body | contains("<!-- qa-round:"))] | length'`.
      Each QA failure comment includes one marker `<!-- qa-round:N -->`; QA assigns the next round as the marker count plus one.
-   - For QA failures below round 5, and for failures after a human has removed the label to resume the loop, read the actionable findings, fix them, push, set `PR Review`, `QA Agent` and `Definition of Done` to pending, and hand back to PR Review before QA.
+   - For QA failures below round 5, and for failures after a human has removed the label to resume the loop, read the actionable findings, fix them, push, set `PR Review` and `QA Agent` to pending (and `Definition of Done` to its informational pending), and hand back to PR Review before QA.
    - A round-5 failure is a hard stop: do not make another fix commit or merge. QA applies `needs-human-review` and escalates to the user;
      leave the PR open. Automated agents never remove this label. Only a human removing it explicitly resumes the loop; retain all markers and derive the next round from them. After that human-approved
      resumption, continue handling failures normally even though the round number is above 5.
@@ -87,8 +83,8 @@ at a time, with production-quality code and tests, and finish by opening a pull 
      `gh api repos/martinslavov/rcas/pulls/<n>/reviews` and `gh api repos/martinslavov/rcas/pulls/<n>/comments`.
      Human comments (not agents or automation) block auto-merge. Ignore tracking/workflow automation comments. Resolved QA-finding comments
      do not by themselves block merging when QA succeeds on the current head SHA; unresolved blocker/major findings still block it.
-   - The ruleset-required checks are `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review`, `secret-scan` and `PR Review`. `PR Review` must be `success` on the current head SHA before QA or merge, and `Definition of Done` (added to the ruleset after it first reports) must be `success` on the current head SHA before merge. **No agent may merge unless every ruleset-required check and all agent statuses (`PR Review`, `QA Agent`, `Definition of Done`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge).
-   - If ALL checks pass, `PR Review`, `QA Agent` and `Definition of Done` are `success` on the current head SHA, `needs-human-review` is absent, and there are no human
+   - The ruleset-required checks are `unit-tests`, `Component Tests (make up && make component-tests)`, `Sanity Tests (make up && make sanity-tests)`, `Static Review (checkstyle)`, `QA Agent`, `analyze` (CodeQL), `dependency-review`, `secret-scan` and `PR Review`. `PR Review` must be `success` on the current head SHA before QA or merge. `Definition of Done` is manual only and is not required. **No agent may merge unless every ruleset-required check and the agent statuses (`PR Review`, `QA Agent`) are successful on the current head SHA** (pending, skipped, unknown or failed means do not merge).
+   - If ALL checks pass, `PR Review` and `QA Agent` are `success` on the current head SHA, `needs-human-review` is absent, and there are no human
      comments or unresolved blocker/major findings, merge with `gh pr merge <n> -R martinslavov/rcas --merge --delete-branch` and report it.
      Merging closes the task issue (`Closes #N`) and the tracking issue, and moves the board item to Done automatically.
    - For failing non-agent CI checks, use the bounded CI fix loop below; PR Review and QA findings use their separate five-round

@@ -10,7 +10,7 @@ with an actionable message if the secret is missing when a dispatch is requested
 
 The `agent-read` repository label is the opt-in switch. Create an issue using the normal issue template, include
 acceptance criteria, then apply `agent-read` to start the flow. The label is read on the issue (starts the
-Architect/Engineer stages) or on the PR (enables the PR Review → QA → DoD → merge stages for the linked issue); either
+Architect/Engineer stages) or on the PR (enables the PR Review → QA → merge stages for the linked issue); either
 level is sufficient for PR stages, and a PR with no `PR Review` status yet starts at PR Review:
 
 1. `architect-agent` posts a design note or auditable skip. If approval is required, the workflow waits for the repository
@@ -18,13 +18,14 @@ level is sufficient for PR stages, and a PR with no `PR Review` status yet start
    the Engineer after the note.
 2. `senior-java-software-engineer` implements the task and opens a PR with `Closes #<issue>`, then sets the agent status
    gates to pending.
-3. `pr-review-agent`, `senior-qa-engineer`, and `dod-validator-agent` are dispatched in order from the corresponding
-   status changes. Failed agent gates or required CI checks dispatch the Engineer for a bounded fix iteration.
+3. `pr-review-agent` and `senior-qa-engineer` are dispatched in order from the corresponding
+   status changes. `dod-validator-agent` is never dispatched by the automation (manual only; its status is informational).
+   Failed agent gates or required CI checks dispatch the Engineer for a bounded fix iteration.
    The dispatcher also polls every five minutes to recover if a GitHub Actions-generated check event is not delivered.
    CI fix attempts are recorded on the PR across commit SHAs; a third failed attempt or a repeated failure signature
    adds `needs-human-review`, notifies the repository owner, and stops further dispatch until a human removes the label.
 4. `ci-agent-auto-merge.yml` merges only an open PR linked to an issue, where the issue or the PR has `agent-read`, when all ruleset-required checks,
-   `PR Review`, `QA Agent`, and `Definition of Done` succeed on the current head SHA and there are no human PR comments
+   `PR Review` and `QA Agent` succeed on the current head SHA and there are no human PR comments
    or reviews. It also checks `needs-human-review`. A five-minute poll handles check completion; a human can remove
    `needs-human-review` to resume a stopped task. After merge it records elapsed time on the issue and PR.
 

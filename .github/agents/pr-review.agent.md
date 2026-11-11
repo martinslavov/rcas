@@ -44,7 +44,7 @@ through the `PR Review` commit status. You never edit, commit or push code, and 
    `gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=failure -f context="PR Review" -f description="1 blocker, 2 major"`.
    If blocked or unable to review, set `failure` with the reason rather than leaving the status pending.
 6. On failure rounds below 5, report actionable blocker/major findings for the engineer to fix. The engineer pushes a fix,
-   resets `PR Review`, `QA Agent` and `Definition of Done` to pending, then hands the updated PR back for another review. QA must not start
+   resets `PR Review` and `QA Agent` to pending, then hands the updated PR back for another review. QA must not start
    until `PR Review` is `success` on the current head SHA. Minor/nit findings are reported but do not prevent QA from starting.
 7. On a round-5 failure, stop automated review iteration, set the failure status with a description such as
    `PR Review iteration limit (5) reached – human review required`, apply `needs-human-review`, and post an escalation
