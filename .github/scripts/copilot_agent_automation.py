@@ -638,6 +638,8 @@ def assign_to_copilot(api: GitHub, dispatch: Dispatch) -> None:
         print(f"Skipping duplicate {dispatch.stage} dispatch for #{dispatch.number}")
         return
 
+    # Query only the matching field: GitHub fails the whole query when issue(number) points at a PR.
+    item_field = "issue" if dispatch.resource == "issue" else "pullRequest"
     query = """
       query($owner: String!, $name: String!, $number: Int!) {
         repository(owner: $owner, name: $name) {
@@ -645,11 +647,10 @@ def assign_to_copilot(api: GitHub, dispatch: Dispatch) -> None:
           suggestedActors(capabilities: [CAN_BE_ASSIGNED], first: 100) {
             nodes { login ... on Bot { id } }
           }
-          issue(number: $number) { id }
-          pullRequest(number: $number) { id }
+          %s(number: $number) { id }
         }
       }
-    """
+    """ % item_field
     data = api.graphql(
         query,
         {"owner": api.owner, "name": api.name, "number": dispatch.number},
@@ -666,7 +667,7 @@ def assign_to_copilot(api: GitHub, dispatch: Dispatch) -> None:
         raise AutomationError(
             "Copilot cloud agent is not assignable in this repository; enable it in repository settings"
         )
-    item = data["issue"] if dispatch.resource == "issue" else data["pullRequest"]
+    item = data.get(item_field)
     if item is None:
         raise AutomationError(f"Could not find {dispatch.resource} #{dispatch.number}")
     profile = AGENT_FILES[dispatch.stage]

@@ -471,5 +471,58 @@ class AutoMergeTest(unittest.TestCase):
         self.assertFalse(api.merged)
 
 
+class AssignToCopilotQueryTest(unittest.TestCase):
+    class GraphQLGitHub:
+        owner = "martinslavov"
+        name = "rcas"
+        repository = "martinslavov/rcas"
+
+        def __init__(self):
+            self.queries = []
+            self.comments = []
+
+        def pages(self, path):
+            return []
+
+        def request(self, method, path, body=None):
+            self.comments.append((path, body))
+            return {}
+
+        def graphql(self, query, variables):
+            self.queries.append(query)
+            if "addAssigneesToAssignable" in query:
+                return {"addAssigneesToAssignable": {"assignable": {"id": "ITEM"}}}
+            repository = {
+                "id": "REPO",
+                "suggestedActors": {"nodes": [{"login": "copilot-swe-agent", "id": "BOT"}]},
+            }
+            if "issue(number" in query:
+                repository["issue"] = {"id": "ITEM"}
+            if "pullRequest(number" in query:
+                repository["pullRequest"] = {"id": "ITEM"}
+            return {"repository": repository}
+
+    def test_pull_request_dispatch_queries_only_pull_request(self):
+        from copilot_agent_automation import assign_to_copilot
+
+        api = self.GraphQLGitHub()
+        assign_to_copilot(api, Dispatch("pull", 190, "pr-review-agent", "a" * 40))
+
+        lookup = api.queries[0]
+        self.assertIn("pullRequest(number", lookup)
+        self.assertNotIn("issue(number", lookup)
+        self.assertEqual(2, len(api.queries))
+
+    def test_issue_dispatch_queries_only_issue(self):
+        from copilot_agent_automation import assign_to_copilot
+
+        api = self.GraphQLGitHub()
+        assign_to_copilot(api, Dispatch("issue", 189, "senior-java-software-engineer"))
+
+        lookup = api.queries[0]
+        self.assertIn("issue(number", lookup)
+        self.assertNotIn("pullRequest(number", lookup)
+
+
 if __name__ == "__main__":
     unittest.main()
