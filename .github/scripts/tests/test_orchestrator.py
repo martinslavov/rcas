@@ -7,12 +7,16 @@ from unittest.mock import Mock
 from orchestrator import (
     ACTIVE_STATES,
     ATTEMPT_LOOPS,
+    ENTRY_LABEL,
+    PR_REVIEW_INTAKE_ACTION,
+    SHIP_PR_MARKER,
     STATE_TABLE,
     Orchestrator,
     OrchestratorError,
     default_record,
     main,
     parse_record,
+    pr_review_intake_record,
     serialize_record,
     transition_record,
     validate_transition,
@@ -169,6 +173,154 @@ class OrchestratorStateMachineTests(unittest.TestCase):
         self.assertEqual(updated["head_sha"], "0123456789abcdef")
         self.assertEqual(updated["updated_by"], "senior-java-software-engineer")
         self.assertEqual(updated["updated_at"], self.now)
+
+    def test_ship_pr_intake_moves_only_supported_states_into_pr_review(self):
+        for state in ("todo", "implementation"):
+            with self.subTest(state=state):
+                updated = pr_review_intake_record(
+                    self.record(state), 202, "a" * 40, now=self.now,
+                )
+                self.assertEqual(updated["state"], "pr-review")
+                self.assertEqual(updated["owner_agent"], "pr-review-agent")
+                self.assertEqual(updated["head_sha"], "a" * 40)
+                self.assertEqual(updated["updated_by"], "ship-pr")
+                self.assertEqual(
+                    updated["actions"][PR_REVIEW_INTAKE_ACTION],
+                    {"pr": 202, "head_sha": "a" * 40},
+                )
+
+    def test_ship_pr_intake_is_idempotent_for_the_same_pr_and_head(self):
+        first = pr_review_intake_record(self.record("implementation"), 202, "a" * 40, now=self.now)
+        repeated = pr_review_intake_record(
+            first, 202, "a" * 40, now="2026-10-26T10:00:00Z",
+        )
+        self.assertEqual(repeated, first)
+        with self.assertRaisesRegex(OrchestratorError, "different head SHA"):
+            pr_review_intake_record(first, 202, "b" * 40, now="2026-10-26T10:00:00Z")
+
+    def test_ship_pr_intake_rejects_invalid_states_shas_and_different_prs(self):
+        for state in ("backlog", "architecture", "approval-pending", "qa", "done"):
+            with self.subTest(state=state):
+                with self.assertRaisesRegex(OrchestratorError, "cannot start PR Review"):
+                    pr_review_intake_record(self.record(state), 202, "a" * 40)
+        with self.assertRaisesRegex(OrchestratorError, "head SHA"):
+            pr_review_intake_record(self.record(), 202, "not-a-sha")
+        first = pr_review_intake_record(self.record(), 202, "a" * 40, now=self.now)
+        with self.assertRaisesRegex(OrchestratorError, "different ship-pr PR"):
+            pr_review_intake_record(first, 203, "b" * 40)
+
+    def test_ship_pr_intake_requires_linked_ship_pr_and_orders_label_dispatch_last(self):
+        record = self.record("implementation")
+        comments = [{"id": 987, "body": serialize_record(record), "author": "x"}]
+        issue = {
+            "number": 101,
+            "state": "open",
+            "labels": [{"name": ENTRY_LABEL}],
+        }
+        pr = {
+            "number": 202,
+            "state": "open",
+            "body": f"Closes #101\n{SHIP_PR_MARKER}",
+            "base": {"ref": "main"},
+            "head": {"sha": "a" * 40},
+            "labels": [],
+        }
+        calls = []
+
+        def runner(args):
+            calls.append(args)
+            endpoint = args[-1]
+            if endpoint == "repos/martinslavov/rcas/issues/101":
+                return json.dumps(issue)
+            if endpoint == "repos/martinslavov/rcas/pulls/202":
+                return json.dumps(pr)
+            if endpoint == "repos/martinslavov/rcas/issues/101/comments":
+                return "\n".join(json.dumps(comment) for comment in comments)
+            if endpoint == "repos/martinslavov/rcas/issues/101/labels":
+                return "state:implementation\nagent-read"
+            return ""
+
+        updated = Orchestrator(runner).intake_pr_review(101, 202, True, False)
+        self.assertEqual(updated["state"], "pr-review")
+        patch_index = next(i for i, call in enumerate(calls) if "PATCH" in call)
+        start_index = next(
+            i for i, call in enumerate(calls)
+            if "POST" in call and any("agent-automation-start:" in value for value in call)
+        )
+        issue_label_removal_index = next(
+            i for i, call in enumerate(calls)
+            if "DELETE" in call and call[-1].endswith(f"/labels/{ENTRY_LABEL}")
+        )
+        pr_label_index = next(
+            i for i, call in enumerate(calls)
+            if "POST" in call and call[-1] == f"labels[]={ENTRY_LABEL}"
+        )
+        self.assertLess(patch_index, start_index)
+        self.assertLess(start_index, issue_label_removal_index)
+        self.assertLess(issue_label_removal_index, pr_label_index)
+
+    def test_ship_pr_intake_refuses_unlinked_or_unmarked_pr_without_mutations(self):
+        record = self.record("todo")
+        issue = {"number": 101, "state": "open", "labels": []}
+        pr = {
+            "number": 202,
+            "state": "open",
+            "body": "Closes #101",
+            "base": {"ref": "main"},
+            "head": {"sha": "a" * 40},
+            "labels": [],
+        }
+        calls = []
+
+        def runner(args):
+            calls.append(args)
+            endpoint = args[-1]
+            if endpoint == "repos/martinslavov/rcas/issues/101":
+                return json.dumps(issue)
+            if endpoint == "repos/martinslavov/rcas/pulls/202":
+                return json.dumps(pr)
+            if endpoint == "repos/martinslavov/rcas/issues/101/comments":
+                return json.dumps({"id": 987, "body": serialize_record(record), "author": "x"})
+            return ""
+
+        with self.assertRaisesRegex(OrchestratorError, "created by /ship-pr"):
+            Orchestrator(runner).intake_pr_review(101, 202, True, False)
+        self.assertFalse(any("-X" in call for call in calls))
+
+    def test_ship_pr_intake_without_agent_read_does_not_opt_into_automation(self):
+        record = self.record("todo")
+        comments = [{"id": 987, "body": serialize_record(record), "author": "x"}]
+        issue = {"number": 101, "state": "open", "labels": []}
+        pr = {
+            "number": 202,
+            "state": "open",
+            "body": f"Closes #101\n{SHIP_PR_MARKER}",
+            "base": {"ref": "main"},
+            "head": {"sha": "a" * 40},
+            "labels": [],
+        }
+        calls = []
+
+        def runner(args):
+            calls.append(args)
+            endpoint = args[-1]
+            if endpoint == "repos/martinslavov/rcas/issues/101":
+                return json.dumps(issue)
+            if endpoint == "repos/martinslavov/rcas/pulls/202":
+                return json.dumps(pr)
+            if endpoint == "repos/martinslavov/rcas/issues/101/comments":
+                return "\n".join(json.dumps(comment) for comment in comments)
+            if endpoint == "repos/martinslavov/rcas/issues/101/labels":
+                return "state:todo"
+            return ""
+
+        updated = Orchestrator(runner).intake_pr_review(101, 202, False, False)
+        self.assertEqual(updated["state"], "pr-review")
+        self.assertFalse(any(
+            "POST" in call
+            and call[-2:] == ["-f", f"labels[]={ENTRY_LABEL}"]
+            for call in calls
+        ))
 
     def issue_runner(self, calls, comments, label_fail=False, board_fail=False):
         def runner(args):

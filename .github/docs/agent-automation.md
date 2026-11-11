@@ -8,33 +8,45 @@ owner with Metadata read and Actions, Contents, Issues, and Pull requests read/w
 repository Actions secret `COPILOT_AGENT_TOKEN` under **Settings → Secrets and variables → Actions**. The workflow fails
 with an actionable message if the secret is missing when a dispatch is requested. Do not put tokens in issue text.
 
-The `agent-read` repository label is the opt-in switch. Create an issue using the normal issue template, include
-acceptance criteria, then apply `agent-read` to start the flow. The label is read on the issue (starts the
-Architect/Engineer stages) or on the PR (enables the PR Review → QA → merge stages for the linked issue); either
-level is sufficient for PR stages, and a PR with no `PR Review` status yet starts at PR Review:
+The `agent-read` repository label is the opt-in switch. On an issue, it starts Architect/Engineer automation. After the
+Engineer pushes the implementation branch, use `/ship-pr agent-read` to create the PR and hand off to PR Review. For work
+that already has an implementation branch but no agent-read issue flow, use `/ship-pr agent-read` to create/reuse the task
+issue and start directly at PR Review. Use `/ship-pr` to create every PR. If no task issue is already
+identified, the skill delegates issue creation to `product-owner-agent` first with Product Owner-style acceptance criteria,
+then creates a PR that includes
+`Closes #<issue>` and `<!-- ship-pr -->`. The skill's guarded `orchestrator.py intake-pr-review` action records the PR head
+SHA and start marker and moves the issue directly to PR Review. `agent-read` is added to the PR only when passed to `/ship-pr`; it is never added to a newly-created task issue. The PR label
+starts the PR Review → QA → merge stages without
+re-running Architect or Engineer:
 
 1. `architect-agent` posts a design note or auditable skip. If approval is required, the workflow waits for the repository
    owner to post `<!-- architecture-approved -->` with `Approved by @<owner> at <UTC timestamp>`; otherwise it dispatches
    the Engineer after the note.
-2. `senior-java-software-engineer` implements the task and opens a PR with `Closes #<issue>`, then sets the agent status
-   gates to pending.
-3. `pr-review-agent` and `senior-qa-engineer` are dispatched in order from the corresponding
+2. `senior-java-software-engineer` implements the task, commits and pushes its branch, then hands it back for `/ship-pr`.
+   It does not create a PR. For failure-fix assignments on an existing PR, it pushes the fix to that PR's branch.
+3. When `/ship-pr agent-read` adds the label to the marked PR, `pr-review-agent` and `senior-qa-engineer` are dispatched in order from the corresponding
    status changes. `dod-validator-agent` is never dispatched by the automation (manual only; its status is informational).
    Failed agent gates or required CI checks dispatch the Engineer for a bounded fix iteration.
    The dispatcher also polls every five minutes to recover if a GitHub Actions-generated check event is not delivered.
    CI fix attempts are recorded on the PR across commit SHAs; a third failed attempt or a repeated failure signature
    adds `needs-human-review`, notifies the repository owner, and stops further dispatch until a human removes the label.
-4. `ci-agent-auto-merge.yml` merges only an open PR linked to an issue, where the issue or the PR has `agent-read`, when all ruleset-required checks,
+4. `ci-agent-auto-merge.yml` merges only an open `/ship-pr`-marked PR linked to an open issue, with `agent-read` on the PR,
+   when all ruleset-required checks,
    `PR Review` and `QA Agent` succeed on the current head SHA and there are no human PR comments
    or reviews. It also checks `needs-human-review`. A five-minute poll handles check completion; a human can remove
    `needs-human-review` to resume a stopped task. After merge it records elapsed time on the issue and PR.
 
-The five-minute poll also copies the label from the linked open `agent-read` issue (`Closes #N`) to its PR. No
-`pull_request_target` trigger is used (see `security.md`).
+The dispatcher listens for a PR `labeled` event and also polls every five minutes to recover missed dispatches. It ignores
+PRs without the `/ship-pr` marker, an open linked task issue, and `agent-read` on the PR. Issue-level `agent-read` starts
+only the Architect/Engineer task flow; it is not copied to PRs. No `pull_request_target` trigger is used (see `security.md`).
 
-**Latency:** labels added by `GITHUB_TOKEN` do not trigger workflows, and a label added manually to a PR only is not an
-event the dispatcher reacts to. The label copy and the next stage therefore start at the nearest five-minute poll
-(`*/5 * * * *`), not immediately. Status and check-suite events still dispatch the following stages immediately.
+**Latency:** PR labels added with the user's `gh` credentials trigger the PR-label dispatcher. Labels added by
+`GITHUB_TOKEN` do not trigger workflows, so the five-minute poll (`*/5 * * * *`) is the recovery path. Status and
+check-suite events dispatch subsequent stages immediately.
+
+The `<!-- ship-pr -->` marker and skill instructions make `/ship-pr` the supported PR creation route, but GitHub repository
+permissions may still allow manual PR creation. Such PRs are not eligible for this automation unless they carry the marker,
+link an open task issue, and have `agent-read` on the PR.
 
 The workflows check out only the default branch and do not execute issue or PR content while handling the Copilot token
 or merge permissions. If dispatch fails, inspect the `Copilot Agent Dispatch` run for a missing token, insufficient
@@ -45,6 +57,8 @@ token permissions, disabled cloud agent, or a GitHub API assignment error.
 `Issue Board Tracking` (`ci-issue-board.yml`) runs on every opened issue. After placing it on the board it seeds the
 orchestrator task-state record with `orchestrator.py init <issue> --state backlog|todo --agent human` (`backlog` when the
 issue has the `backlog` label, otherwise `todo`). Issues created directly with `gh issue create` or the web form therefore
-also get a `state:*` label and canonical record, so later `orchestrator.py transition` calls do not fail. If the Product
+also get a `state:*` label and canonical record, so later `orchestrator.py transition` calls do not fail. The `/ship-pr`
+handoff uses the dedicated `intake-pr-review <issue> --pr <pr> [--agent-read]` command, which validates the linked marked PR
+and permits only the narrow `todo|implementation → pr-review` entry; ordinary transition rules remain unchanged. If the Product
 Owner already seeded a record, the step is a no-op. The step authenticates repository calls (comment, labels) with the job `GITHUB_TOKEN` (`issues: write`); `PROJECT_TOKEN` is passed only as `PROJECT_TOKEN` and used by `task_queue.sh` for the Projects GraphQL calls. Issues opened before this workflow change are not backfilled; seed
 them manually with `orchestrator.py init`.

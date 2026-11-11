@@ -9,7 +9,7 @@ _Summarize the change with the relevant motivation and context. State any breaki
 _List the links to issues, pull requests or dependencies related to or required by this change._
 
 - Tracking issue: added automatically (workflow `PR Issue Tracking`); it is closed when this PR is merged.
-- Closes: #<issue> (the issue created for the task; closed and moved to Done on merge)
+- Closes #<issue> (the issue created for the task; closed and moved to Done on merge)
 - Related to:
   - (# other issues, # other pull requests, dependencies)
 

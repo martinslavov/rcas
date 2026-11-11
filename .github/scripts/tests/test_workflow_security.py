@@ -355,7 +355,7 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertIn("issue_comment:\n    types: [created, edited]", text)
         self.assertIn("\n  status:\n", text)
         self.assertIn('cron: "*/5 * * * *"', text)
-        self.assertNotIn("pull_request:", text)
+        self.assertIn("pull_request:\n    types: [labeled]", text)
         self.assertNotIn("pull_request_target", text)
         self.assertNotIn("workflow_run", text)
         self.assertIn("permissions: {}", text)

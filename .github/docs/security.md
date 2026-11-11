@@ -148,7 +148,7 @@ it does not replace GitHub authorization. Separate identities per agent are defe
 |-------|----------|------------|
 | `product-owner-agent` | read, search, execute | Creates/updates GitHub issues only; no code |
 | `architect-agent` | read, search, execute | Issue comments and the approval label only; no code |
-| `senior-java-software-engineer` | read, edit, search, execute | Source, tests, docs and workflows on a `feature/*` branch; opens the PR; sets only `pending` agent statuses; merges only when every gate passes |
+| `senior-java-software-engineer` | read, edit, search, execute | Source, tests, docs and workflows on a `feature/*` branch; pushes implementation branches and fixes on existing PRs; PR creation is handled through `/ship-pr` |
 | `pr-review-agent` | read, search, execute | PR comments and the `PR Review` status; no code |
 | `senior-qa-engineer` | read, edit, search, execute | Adds or improves tests on the PR branch (`edit` is needed for that), PR comments, the `QA Agent` status; no production code |
 | `dod-validator-agent` | read, search, execute | PR comments and the `Definition of Done` status; no code |
