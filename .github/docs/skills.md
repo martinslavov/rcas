@@ -48,4 +48,4 @@ Arguments: `/ship-pr [label[,label...]]`.
 |------------|-----------|
 | `/ship-pr` | Default labels only (type and impact); full pipeline through merge |
 | `/ship-pr <label>` | Default labels plus the given ones; unknown labels are reported, not created; `needs-human-review` is refused |
-| `/ship-pr agent-read` | Commit, push and PR with the `agent-read` label, then stop. The agent automation (dispatch, PR Review, QA, auto-merge) owns the rest, so the skill does not set gates, call `pr-review-agent` or `senior-qa-engineer`, and does not merge, to avoid duplicates. See [Agent automation](agent-automation.md) |
+| `/ship-pr agent-read` | Commit, push and PR with the `agent-read` label, then stop. The agent automation (dispatch, PR Review, QA, auto-merge) owns the rest, so the skill does not set gates, call `pr-review-agent` or `senior-qa-engineer`, and does not merge, to avoid duplicates. The PR must link an open task issue with `Closes #<issue>`, otherwise the automation does not pick it up. See [Agent automation](agent-automation.md) |

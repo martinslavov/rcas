@@ -19,6 +19,9 @@ custom agents. Repository: `martinslavov/rcas`. Record `date +%s` at the start f
   the auto-merge gate) owns the review pipeline. Then do steps 1-3 only (commit, push, PR with the labels, including
   `agent-read`) and **do not** run steps 4-9: do not set the gates to `pending`, do not invoke `pr-review-agent`,
   or `senior-qa-engineer`, and do not merge. This avoids duplicate reviews and conflicting statuses.
+  The dispatcher accepts `agent-read` on the PR itself, but only for a PR whose body has `Closes #<issue>` to an open task
+  issue (it picks the PR up from the linked issue). Make sure the PR links such an issue; if there is none, tell the user that
+  the automation will not start for this PR. For an already existing PR, only add the missing label.
   Report the PR link and that the agent automation continues; see `.github/docs/agent-automation.md`.
 
 ## Rules
