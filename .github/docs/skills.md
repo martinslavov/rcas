@@ -41,3 +41,11 @@ Pipeline: commit → push → pull request → `pr-review-agent` → `senior-qa-
 | Stop | `needs-human-review` label, exhausted rounds, or an empty change: stops and reports, no merge |
 | Merge | Only when all required checks and all agent statuses succeed on the current head SHA, using `gh pr merge --merge --delete-branch` |
 | Report | PR link, merge status and total elapsed time |
+
+Arguments: `/ship-pr [label[,label...]]`.
+
+| Invocation | Behaviour |
+|------------|-----------|
+| `/ship-pr` | Default labels only (type and impact); full pipeline through merge |
+| `/ship-pr <label>` | Default labels plus the given ones; unknown labels are reported, not created; `needs-human-review` is refused |
+| `/ship-pr agent-read` | Commit, push and PR with the `agent-read` label, then stop. The agent automation (dispatch, PR Review, QA, DoD, auto-merge) owns the rest, so the skill does not set gates, call `pr-review-agent`, `senior-qa-engineer` or `dod-validator-agent`, and does not merge, to avoid duplicates. See [Agent automation](agent-automation.md) |

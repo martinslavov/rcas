@@ -1,12 +1,25 @@
 ---
 name: ship-pr
-description: Ship the current work end to end - commit, push, open a PR, run PR Review, QA and DoD, then merge when every gate succeeds on the current head SHA. Use when the user runs /ship-pr or asks to ship, finish or merge the current change.
+description: Ship the current work end to end - commit, push, open a PR, run PR Review, QA and DoD, then merge when every gate succeeds on the current head SHA. Optional arguments add PR labels; with `agent-read` it stops after opening the PR. Use when the user runs /ship-pr [labels] or asks to ship, finish or merge the current change.
 ---
 
 # Ship PR
 
 Run the delivery pipeline for the change in the working tree. The main agent only coordinates; reviews are done by the
 custom agents. Repository: `martinslavov/rcas`. Record `date +%s` at the start for the elapsed time.
+
+## Arguments
+
+`/ship-pr [label[,label...]]` - optional extra PR labels, separated by commas or spaces.
+
+- No arguments: only the default labels (type `bug`/`documentation`/`enhancement` and impact `minor`/`major`).
+- With arguments: default labels plus the given ones. A label that does not exist is reported to the user, never created silently.
+- `needs-human-review` is refused as an argument; only a human applies or removes it.
+- **`agent-read` mode.** If `agent-read` is among the arguments, the automation (Copilot dispatch → PR Review → QA → DoD and
+  the auto-merge gate) owns the review pipeline. Then do steps 1-3 only (commit, push, PR with the labels, including
+  `agent-read`) and **do not** run steps 4-9: do not set the gates to `pending`, do not invoke `pr-review-agent`,
+  `senior-qa-engineer` or `dod-validator-agent`, and do not merge. This avoids duplicate reviews and conflicting statuses.
+  Report the PR link and that the agent automation continues; see `.github/docs/agent-automation.md`.
 
 ## Rules
 
@@ -29,7 +42,8 @@ custom agents. Repository: `martinslavov/rcas`. Record `date +%s` at the start f
 3. **Pull request.** Use the existing PR or create one with `gh pr create -R martinslavov/rcas --base main --assignee @me`
    and a body built from `.github/PULL_REQUEST_TEMPLATE/pull_request_template.md` (keep headings and order; fill the
    description, `Closes #<issue>` if an issue exists, local test commands with results, the acceptance criteria table).
-   Add the labels the template asks for (type and impact). Store the PR number as `<number>`; use it in every step below.
+   Add the labels the template asks for (type and impact) plus any labels passed as arguments (see "Arguments"; if the PR
+   already exists, add the missing labels to it). Store the PR number as `<number>`; use it in every step below.
 4. **Reset gates.** Set `PR Review`, `QA Agent` and `Definition of Done` to `pending` on the head SHA
    (`gh pr view <number> -R martinslavov/rcas --json headRefOid -q .headRefOid`) as described in the pull request rules of
    `.github/copilot-instructions.md`.
