@@ -1,0 +1,266 @@
+import json
+import subprocess
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from cloud_agent_pr import SHIP_PR_MARKER, run
+
+
+SHA = "a" * 40
+BRANCH = "feature/42-cloud-flow"
+
+
+class FakeGitHubApi:
+    repository = "martinslavov/rcas"
+
+    def __init__(self):
+        self.issue = {
+            "number": 42,
+            "title": "Cloud flow",
+            "state": "open",
+            "labels": [
+                {"name": "agent-read"},
+                {"name": "architecture-approval-required"},
+            ],
+        }
+        state = {
+            "v": 1,
+            "issue": 42,
+            "state": "implementation",
+            "owner_agent": "senior-java-software-engineer",
+            "actions": {},
+        }
+        self.comments = [
+            {
+                "body": "<!-- task-state: " + json.dumps(state) + " -->",
+                "user": {"login": "martinslavov"},
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+            },
+            {
+                "body": "<!-- copilot-agent-dispatch:senior-java-software-engineer:issue -->",
+                "user": {"login": "github-actions[bot]"},
+            },
+            {
+                "body": "<!-- architect-design-note --> Approval required: yes",
+                "user": {"login": "copilot-swe-agent[bot]"},
+            },
+            {
+                "body": "<!-- architecture-approved --> Approved by @martinslavov at 2026-11-11T13:30:01Z",
+                "user": {"login": "martinslavov"},
+            },
+        ]
+        self.branch_sha = SHA
+        self.prs = []
+        self.requests = []
+
+    def pages(self, path):
+        if (path.startswith("/repos/martinslavov/rcas/issues?state=open&labels=agent-read")
+                and any(label["name"] == "agent-read" for label in self.issue["labels"])):
+            return [self.issue]
+        if (path.startswith("/repos/martinslavov/rcas/issues?state=open&labels=state%3Apr-review")
+                and any(label["name"] == "state:pr-review" for label in self.issue["labels"])):
+            return [self.issue]
+        if path.startswith("/repos/martinslavov/rcas/issues/42/comments"):
+            return list(self.comments)
+        if path.startswith("/repos/martinslavov/rcas/issues/43/comments"):
+            return []
+        if "/pulls?state=open&head=" in path:
+            return list(self.prs)
+        return []
+
+    def request(self, method, path, body=None):
+        self.requests.append((method, path, body))
+        if path == "/users/copilot-swe-agent":
+            return {"login": "copilot-swe-agent", "id": 88, "type": "Bot"}
+        if path.startswith("/repos/martinslavov/rcas/branches/feature%2F"):
+            return {"commit": {"sha": self.branch_sha}}
+        if path.startswith("/repos/martinslavov/rcas/issues/") and method == "GET":
+            number = int(path.rsplit("/", 1)[1])
+            return dict(self.issue, number=number)
+        if path.startswith("/repos/martinslavov/rcas/pulls/") and method == "GET":
+            number = int(path.rsplit("/", 1)[1])
+            return next(pr for pr in self.prs if pr["number"] == number)
+        if path == "/repos/martinslavov/rcas/issues/42/comments" and method == "POST":
+            self.comments.append({
+                "body": body["body"],
+                "user": {"login": "github-actions[bot]"},
+                "created_at": "2026-01-01T00:10:00Z",
+                "updated_at": "2026-01-01T00:10:00Z",
+            })
+            return self.comments[-1]
+        if path == "/repos/martinslavov/rcas/pulls" and method == "POST":
+            pr = {
+                "number": 43,
+                "state": "open",
+                "body": body["body"],
+                "base": {"ref": "main"},
+                "head": {"ref": body["head"], "sha": SHA, "repo": {"full_name": self.repository}},
+            }
+            self.prs.append(pr)
+            return pr
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+
+class FakePrCreationApi:
+    repository = "martinslavov/rcas"
+
+    def __init__(self, delegate):
+        self.delegate = delegate
+        self.requests = []
+
+    def request(self, method, path, body=None):
+        self.requests.append((method, path, body))
+        return self.delegate.request(method, path, body)
+
+
+class CloudAgentPrTest(unittest.TestCase):
+    def setUp(self):
+        self.api = FakeGitHubApi()
+        self.pr_creation_api = FakePrCreationApi(self.api)
+        self.root = Path(__file__).resolve().parents[3]
+        self.event = {
+            "ref": "refs/heads/" + BRANCH,
+            "after": SHA,
+            "sender": {"login": "copilot-swe-agent", "id": 88},
+        }
+        self.calls = []
+
+    def runner(self, command, **kwargs):
+        self.calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def test_verified_approved_push_creates_template_pr_and_runs_guarded_intake(self):
+        with patch.dict("os.environ", {
+            "GITHUB_TOKEN": "test-token",
+            "COPILOT_AGENT_TOKEN": "copilot-token",
+        }):
+            self.assertTrue(run("push", self.event, self.api, self.root, self.runner, self.pr_creation_api))
+
+        created = [call for call in self.pr_creation_api.requests
+                   if call[0] == "POST" and call[1] == "/repos/martinslavov/rcas/pulls"]
+        self.assertEqual(1, len(created))
+        body = created[0][2]["body"]
+        self.assertIn("Closes #42", body)
+        self.assertEqual(1, body.count("Closes #42"))
+        self.assertIn(SHIP_PR_MARKER, body)
+        self.assertIn("# Acceptance criteria → evidence", body)
+        self.assertEqual(1, len(self.calls))
+        command = self.calls[0][0]
+        self.assertEqual(["intake-pr-review", "42", "--pr", "43", "--agent-read"], command[-5:])
+        self.assertEqual("test-token", self.calls[0][1]["env"]["GH_TOKEN"])
+        self.assertNotIn("COPILOT_AGENT_TOKEN", self.calls[0][1]["env"])
+        self.assertTrue(any("cloud-agent-pr-authorized:" in comment["body"] for comment in self.api.comments))
+
+    def test_schedule_recovers_failed_intake_and_reuses_created_pr(self):
+        def fail_once(command, **kwargs):
+            self.calls.append(command)
+            if len(self.calls) == 1:
+                state = json.loads(self.api.comments[0]["body"].split("<!-- task-state: ", 1)[1].split(" -->", 1)[0])
+                state.update({"state": "pr-review", "owner_agent": "pr-review-agent", "head_sha": SHA,
+                              "actions": {"ship_pr_intake": {"pr": 43, "head_sha": SHA}}})
+                self.api.comments[0]["body"] = "<!-- task-state: " + json.dumps(state) + " -->"
+                self.api.issue["labels"] = [label for label in self.api.issue["labels"] if label["name"] != "agent-read"]
+                self.api.issue["labels"].append({"name": "state:pr-review"})
+                return subprocess.CompletedProcess(command, 1, "", "retry")
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "test-token"}):
+            with self.assertRaisesRegex(RuntimeError, "scheduled recovery"):
+                run("push", self.event, self.api, self.root, fail_once, self.pr_creation_api)
+            self.assertTrue(run("schedule", {}, self.api, self.root, fail_once, self.pr_creation_api))
+
+        created = [call for call in self.pr_creation_api.requests
+                   if call[0] == "POST" and call[1] == "/repos/martinslavov/rcas/pulls"]
+        self.assertEqual(1, len(created))
+        self.assertEqual(2, len(self.calls))
+
+    def test_new_pr_requires_copilot_token_before_creation(self):
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "workflow-token"}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "COPILOT_AGENT_TOKEN is required"):
+                run("push", self.event, self.api, self.root, self.runner)
+
+        self.assertFalse(any(request[0] == "POST" and request[1] == "/repos/martinslavov/rcas/pulls"
+                             for request in self.api.requests))
+        self.assertEqual([], self.calls)
+
+    def test_existing_contract_pr_is_reused_without_duplicate_creation(self):
+        self.api.prs.append({
+            "number": 77,
+            "state": "open",
+            "body": "Closes #42\n" + SHIP_PR_MARKER,
+            "base": {"ref": "main"},
+            "head": {"ref": BRANCH, "sha": SHA, "repo": {"full_name": self.api.repository}},
+        })
+
+        self.assertTrue(run("push", self.event, self.api, self.root, self.runner))
+        self.assertFalse(any(call[0] == "POST" and call[1] == "/repos/martinslavov/rcas/pulls" for call in self.api.requests))
+        self.assertIn("77", self.calls[0][0])
+
+    def test_rejects_non_agent_read_issue_non_feature_branch_and_unexpected_actor(self):
+        cases = []
+        no_label = FakeGitHubApi()
+        no_label.issue["labels"] = []
+        cases.append((no_label, self.event))
+        non_feature = dict(self.event, ref="refs/heads/topic/42-cloud-flow")
+        cases.append((FakeGitHubApi(), non_feature))
+        unexpected = dict(self.event, sender={"login": "martinslavov", "id": 99})
+        cases.append((FakeGitHubApi(), unexpected))
+
+        for api, event in cases:
+            with self.subTest(event=event):
+                self.assertFalse(run("push", event, api, self.root, self.runner))
+                self.assertFalse(any(request[1] == "/repos/martinslavov/rcas/pulls" for request in api.requests))
+                self.assertEqual([], self.calls)
+
+    def test_expected_actor_id_is_verified_against_github_user_api(self):
+        event = dict(self.event, sender={"login": "copilot-swe-agent", "id": 99})
+
+        self.assertFalse(run("push", event, self.api, self.root, self.runner))
+        self.assertFalse(any(request[1] == "/repos/martinslavov/rcas/pulls" for request in self.api.requests))
+        self.assertEqual([], self.calls)
+
+    def test_backlog_label_blocks_cloud_pr_creation(self):
+        self.api.issue["labels"].append({"name": "backlog"})
+
+        self.assertFalse(run("push", self.event, self.api, self.root, self.runner))
+        self.assertFalse(any("cloud-agent-pr-authorized:" in comment["body"] for comment in self.api.comments))
+        self.assertEqual([], self.calls)
+
+    def test_branch_issue_number_must_match_the_authoritative_issue(self):
+        event = dict(self.event, ref="refs/heads/feature/43-cloud-flow")
+
+        self.assertFalse(run("push", event, self.api, self.root, self.runner))
+        self.assertFalse(any("cloud-agent-pr-authorized:" in comment["body"] for comment in self.api.comments))
+        self.assertFalse(any(request[1] == "/repos/martinslavov/rcas/pulls" for request in self.api.requests))
+        self.assertEqual([], self.calls)
+
+    def test_required_approval_missing_fails_closed_before_authorization_or_pr(self):
+        self.api.comments = [comment for comment in self.api.comments if "architecture-approved" not in comment["body"]]
+
+        self.assertFalse(run("push", self.event, self.api, self.root, self.runner))
+        self.assertFalse(any(request[1] == "/repos/martinslavov/rcas/pulls" for request in self.api.requests))
+        self.assertFalse(any("cloud-agent-pr-authorized:" in comment["body"] for comment in self.api.comments))
+        self.assertEqual([], self.calls)
+
+    def test_design_note_requires_approval_even_without_approval_label(self):
+        self.api.issue["labels"] = [label for label in self.api.issue["labels"]
+                                    if label["name"] != "architecture-approval-required"]
+        self.api.comments = [comment for comment in self.api.comments
+                             if "architecture-approved" not in comment["body"]]
+
+        self.assertFalse(run("push", self.event, self.api, self.root, self.runner))
+        self.assertFalse(any("cloud-agent-pr-authorized:" in comment["body"] for comment in self.api.comments))
+        self.assertEqual([], self.calls)
+
+    def test_changed_branch_head_does_not_authorize_event_or_schedule_recovery(self):
+        self.api.branch_sha = "b" * 40
+
+        self.assertFalse(run("push", self.event, self.api, self.root, self.runner))
+        self.assertEqual([], self.api.prs)
+        self.assertEqual([], self.calls)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -18,8 +18,10 @@ PostgreSQL over R2DBC). You turn a raw request into a clear, small, testable bac
 
 ## Process
 
-1. Read the input. It starts with `TASK-NAME:<name>` or `LABEL:BACKLOG,TASK-NAME:<name>` (`LABEL:` is case-insensitive),
-   followed by a free-form description. Read the relevant parts of the repository to understand the current behavior.
+1. Pipe the original task text to `python3 .github/scripts/task_input.py` and use its JSON output as the contract: an optional first line `TAG: agent-read`
+   precedes `TASK-NAME:<name>` or `LABEL:BACKLOG,TASK-NAME:<name>` (`LABEL:` is case-insensitive). Use only the parsed
+   task name and description as issue content; never copy the `TAG:` control line into the title or body. Other TAG values
+   are unsupported. Read the relevant parts of the repository to understand the current behavior.
 2. Check for duplicates: `gh issue list -R martinslavov/rcas --state all --search "<keywords>"`. If a matching issue
    exists, report it and stop instead of creating a new one.
 3. Analyze: goal and value, in scope / out of scope, assumptions, risks, impact. Ask the user a question only if a
@@ -30,13 +32,16 @@ PostgreSQL over R2DBC). You turn a raw request into a clear, small, testable bac
    - Body sections: `### Type` (Bug / Enhancement / Documentation / Task), `### Description`,
      `### Current behavior / steps to reproduce` (`NA` if not applicable), `### Acceptance criteria` (checklist),
      `### Out of scope`, `### Notes` (risks, dependencies, hints for the implementer).
-   - For `LABEL:BACKLOG` input add `--label backlog` when creating the issue (the label must be set at creation); otherwise
-     add no `backlog` label. Do not set project fields: the `CI Issue Board` workflow puts the issue on the board as
-     `Backlog` (with the label) or `TODO` (without it).
+   - Add every label returned by the parser when creating the issue, including `agent-read` for the opt-in cloud flow and
+     `backlog` for the existing backlog contract. The backlog label must be set at creation; do not set project fields: the
+     `CI Issue Board` workflow puts the issue on the board as `Backlog` (with the label) or `TODO` (without it). An input
+     combining `agent-read` and `backlog` remains in Backlog and does not start cloud processing until a human moves it to TODO.
 5. Note whether the issue may affect architecture, database schema/migrations, messaging, public HTTP APIs or security so
    the Architect can evaluate the approval triggers. Do not treat this assessment as design approval or skip the Architect.
-6. Return to the caller: the issue number and URL, whether it is a backlog item, the branch name `feature/<task-name>` (derive a short lowercase slug
-   with `-` when the name is free text) and a 2-3 line summary of the acceptance criteria.
+6. Return to the caller: the issue number and URL, whether it is a backlog item, the branch name and a 2-3 line summary
+   of the acceptance criteria. For `agent-read` issues, use `feature/<issue-number>-<task-name-slug>` so the hardened PR
+   workflow can validate the branch-to-issue association; for local tasks retain `feature/<task-name>`. Derive a short
+   lowercase slug with `-` when the name is free text.
 
 ## Elapsed time
 

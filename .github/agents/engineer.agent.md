@@ -1,6 +1,6 @@
 ---
 name: senior-java-software-engineer
-description: Senior Java Software Engineer. Implements a GitHub issue end to end for RCAS - branch, code, tests, commits and a pushed branch. PR creation is handled only by /ship-pr. Use after architect-agent posted a design note or skip (and, when required, the user approved); for existing PR fixes, hands back to pr-review-agent.
+description: Senior Java Software Engineer. Implements a GitHub issue end to end for RCAS - branch, code, tests, commits and a pushed branch. Never creates a PR: local PRs are created by /ship-pr and TAG cloud PRs by the guarded workflow. Use after architect-agent posted a design note or skip (and, when required, the user approved); for existing PR fixes, hands back to pr-review-agent.
 tools: ["read", "edit", "search", "execute"]
 ---
 
@@ -28,9 +28,11 @@ PRs only by running the `/ship-pr` skill.
 2. Before creating a branch or implementing, check whether the issue has the label `architecture-approval-required`.
    If it does, proceed only if the issue comments also contain `<!-- architecture-approved -->` recording the user's
    explicit approval, who approved and when. Otherwise stop and return the design note for approval; do not create a branch
-   or make implementation changes.
-3. Create the branch `feature/<task-name>` from an up to date `main` (only `feature/*` and `hotfix/*` branches can be
-   created). Never work on or push to `main`.
+   or make implementation changes. For an `agent-read` cloud issue, use `feature/<issue-number>-<task-name-slug>` so the
+   trusted PR-creation workflow can verify the branch-to-issue association; local branches retain `feature/<task-name>`.
+3. Create the branch from an up to date `main`: cloud `agent-read` issues use the exact `feature/<issue-number>-<task-name-slug>`
+   branch; local tasks use `feature/<task-name>`. Only `feature/*` and `hotfix/*` branches can be created. Never work on or
+   push to `main`.
    State transitions: the `/ship-pr` intake records `implementation → pr-review` after the PR exists; use `merge → done`
    only after verifying the merge, with this agent id.
 4. Implement the smallest change that satisfies every acceptance criterion; follow the existing package structure
@@ -44,8 +46,9 @@ PRs only by running the `/ship-pr` skill.
 8. Commit with clear messages; each message ends with the trailer
    `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`.
 9. **Initial implementation handoff:** commit and push the feature branch, but do not create a PR or set PR status gates.
-   Report the branch name, issue, commit SHA, tests actually run and acceptance-criteria evidence to the main agent, which
-   creates the PR by running `/ship-pr`. If this was an issue-only run, post the agent-run record on the issue with `pr` and
+   Report the branch name, issue, commit SHA, tests actually run and acceptance-criteria evidence to the main agent. The
+   trusted workflow creates the PR for `TAG: agent-read` tasks; otherwise the main agent uses `/ship-pr`. If this was an
+   issue-only run, post the agent-run record on the issue with `pr` and
    `sha` set to `null` as applicable.
 10. **Existing PR fix assignment:** when dispatched for a review, QA or CI failure on an already-open PR, push the fix to that
    PR's branch. Do not create a second PR. Follow the existing PR template/evidence rules, reset the agent gates as described

@@ -20,6 +20,7 @@ from typing import Any
 API_ROOT = "https://api.github.com"
 API_VERSION = "2022-11-28"
 ENTRY_LABEL = "agent-read"
+BACKLOG_LABEL = "backlog"
 HUMAN_REVIEW_LABEL = "needs-human-review"
 ARCHITECTURE_APPROVAL_LABEL = "architecture-approval-required"
 SHIP_PR_MARKER = "<!-- ship-pr -->"
@@ -198,6 +199,7 @@ def _dispatch_for_issue_comment(
         _is_pr(issue)
         or issue.get("state") != "open"
         or ENTRY_LABEL not in issue_labels
+        or BACKLOG_LABEL in issue_labels
         or HUMAN_REVIEW_LABEL in issue_labels
     ):
         return None
@@ -218,6 +220,7 @@ def _ready_issue_dispatch(api: GitHub, issue: dict[str, Any]) -> Dispatch | None
         _is_pr(issue)
         or issue.get("state") != "open"
         or ENTRY_LABEL not in issue_labels
+        or BACKLOG_LABEL in issue_labels
         or HUMAN_REVIEW_LABEL in issue_labels
     ):
         return None
@@ -237,7 +240,10 @@ def _ready_issue_dispatch(api: GitHub, issue: dict[str, Any]) -> Dispatch | None
         if (comment.get("user") or {}).get("login") in trusted_agent_authors
         and (DESIGN_MARKER in (comment.get("body") or "") or SKIP_MARKER in (comment.get("body") or ""))
     ]
-    approval_required = ARCHITECTURE_APPROVAL_LABEL in issue_labels
+    approval_required = ARCHITECTURE_APPROVAL_LABEL in issue_labels or any(
+        re.search(r"Approval required:\s*yes", item.get("body") or "", re.IGNORECASE)
+        for item in design_notes
+    )
     if approval_required:
         has_design_approval_request = any(
             re.search(r"Approval required:\s*yes", item.get("body") or "", re.IGNORECASE)
@@ -559,7 +565,7 @@ def get_dispatches(event_name: str, event: dict[str, Any], api: GitHub) -> list[
         issue = event.get("issue") or {}
         label = (event.get("label") or {}).get("name")
         if event.get("action") == "labeled" and label == ENTRY_LABEL and issue.get("state") == "open":
-            if not _is_pr(issue) and HUMAN_REVIEW_LABEL not in _labels(issue):
+            if not _is_pr(issue) and BACKLOG_LABEL not in _labels(issue) and HUMAN_REVIEW_LABEL not in _labels(issue):
                 return [Dispatch("issue", issue["number"], "architect-agent")]
         if event.get("action") == "unlabeled" and label == HUMAN_REVIEW_LABEL and _is_pr(issue):
             number = issue["number"]

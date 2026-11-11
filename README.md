@@ -282,20 +282,22 @@ Custom agents live in `.github/agents/`:
 |-------|------|
 | `product-owner-agent` | Senior Product Owner: analyzes the input and creates a GitHub issue with acceptance criteria |
 | `architect-agent` | Senior Software Architect: posts a design note or an auditable skip, and gates high-risk changes on explicit user approval |
-| `senior-java-software-engineer` | Senior Java Software Engineer: implements the issue on a `feature/*` branch, tests it and opens a PR |
+| `senior-java-software-engineer` | Senior Java Software Engineer: implements and pushes the issue branch; PR creation is handled by `/ship-pr` locally or the guarded cloud workflow for TAG tasks |
 | `pr-review-agent` | Independent PR Reviewer: reads the issue and full diff, posts severity-ranked findings and sets `PR Review`; never changes code |
 | `senior-qa-engineer` | Senior QA Engineer: starts after current-head `PR Review` success, tests the PR, reports bugs and sets `QA Agent` |
 | `dod-validator-agent` | Definition of Done Validator: **manual only** (no flow starts it; run it explicitly), maps every acceptance criterion to behaviour-verifying evidence, posts the AC → evidence table and sets `Definition of Done`; never changes code |
 
 Reusable procedures such as `/ship-pr` (commit → push → PR → PR Review → QA → merge; DoD is manual only and not run by the skill) live in `.github/skills/`; see [Skills](.github/docs/skills.md).
 
-Give a task as `TASK-NAME:<name>` followed by the description for the interactive agent workflow. To start an existing, ready issue
-automatically, add the `agent-read` label: Copilot runs Architect first, waits for required human approval when applicable, then
-dispatches Engineer → PR Review → QA. Required CI failures return the task to Engineer, and successful checks/statuses trigger
-automatic merge. See [Agent automation](.github/docs/agent-automation.md) for setup and stop/resume behavior.
+Give a task as `TASK-NAME:<name>` followed by the description for the interactive local workflow. To opt into the cloud
+flow, prefix it with `TAG: agent-read`; the Product Owner consumes this control line, creates the issue with `agent-read`, and
+keeps TAG out of the issue title/body. Copilot runs Architect first, waits for required human approval when applicable, then
+dispatches Engineer. The trusted cloud PR workflow creates/reuses an eligible `feature/<issue>-<task-slug>` PR and hands off
+to PR Review → QA → automatic merge. The five-minute poll recovers a missed PR/intake. Plain TASK-NAME and
+LABEL:BACKLOG,TASK-NAME retain the existing behavior. See [Agent automation](.github/docs/agent-automation.md).
 
 The interactive workflow is Product Owner → Architect (design note or auditable skip) →
-explicit user approval when required → Engineer → PR Review → QA → merge → elapsed time recorded on the issue and PR
+explicit user approval when required → Engineer → (cloud PR workflow for TAG tasks or `/ship-pr` locally) → PR Review → QA → merge → elapsed time recorded on the issue and PR
 (`.github/scripts/post_task_elapsed.sh`). For architecture changes (new module/layer/component or cache
 topology), database schema/migrations, messaging/Kafka, public HTTP API or security changes, the Architect applies
 `architecture-approval-required`; the orchestrator must wait for the user's explicit approval recorded on the issue as
@@ -347,8 +349,10 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 
 | Input | Result |
 |-------|--------|
-| `TASK-NAME:<name>` | Issue created in `TODO` (default) and the full flow runs immediately |
+| `TAG: agent-read` + `TASK-NAME:<name>` | Issue created in `TODO` with `agent-read`; Architect/approval/Engineer and the trusted cloud PR workflow continue automatically |
+| `TASK-NAME:<name>` | Issue created in `TODO` (default) and the existing local flow runs |
 | `LABEL:BACKLOG,TASK-NAME:<name>` | Issue created with the `backlog` label in `Backlog`; nothing else runs |
+| `TAG: agent-read` + `LABEL:BACKLOG,TASK-NAME:<name>` | Both labels are preserved; cloud processing waits until a human moves the issue out of Backlog |
 
 To start a backlog task without a state record, first seed it with `orchestrator.py init <issue> --state backlog --agent human`,
 then use `orchestrator.py transition <issue> todo --agent human`; it updates the board and removes the legacy `backlog` label.

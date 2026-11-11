@@ -15,12 +15,12 @@ custom agents. Repository: `martinslavov/rcas`. Record `date +%s` at the start f
 - No arguments: only the default labels (type `bug`/`documentation`/`enhancement` and impact `minor`/`major`).
 - With arguments: default labels plus the given ones. A label that does not exist is reported to the user, never created silently.
 - `needs-human-review` is refused as an argument; only a human applies or removes it.
-- **`agent-read` mode.** If `agent-read` is among the arguments, the automation (Copilot dispatch → PR Review → QA and
-  the auto-merge gate) owns the review pipeline. Create or reuse the task issue, create/reuse the `/ship-pr` PR, then run
-  `orchestrator.py intake-pr-review <issue> --pr <pr> --agent-read`. This records the current head SHA and start marker,
-  moves the task directly to PR Review, removes `agent-read` from the issue, and adds it to the PR. Do not set status gates,
-  invoke review/QA agents, or merge; report that automation continues. The issue must not be in `TODO` with issue-level
-  `agent-read`, since that means Architect/Engineer automation has not completed. See `.github/docs/agent-automation.md`.
+- **`agent-read` mode.** For a local/manual handoff, if `agent-read` is among the arguments, the automation (Copilot dispatch
+  → PR Review → QA and auto-merge) owns the review pipeline. Create or reuse the task issue and `/ship-pr` PR, then run
+  `orchestrator.py intake-pr-review <issue> --pr <pr> --agent-read`. For cloud issues created from `TAG: agent-read`, do not
+  invoke this skill after the Engineer push: the guarded five-minute cloud workflow creates/reuses the PR and runs the same
+  intake. In either path do not set status gates, invoke review/QA agents, or merge; report that automation continues. See
+  `.github/docs/agent-automation.md`.
 
 ## Rules
 

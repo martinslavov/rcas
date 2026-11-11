@@ -5,25 +5,36 @@
 The workflow uses the GitHub Copilot cloud-agent assignment API with the repository's existing custom-agent profiles.
 Copilot cloud agent must be enabled for the repository. Create a fine-grained user-to-server token for the repository
 owner with Metadata read and Actions, Contents, Issues, and Pull requests read/write permissions, then save it as the
-repository Actions secret `COPILOT_AGENT_TOKEN` under **Settings → Secrets and variables → Actions**. The workflow fails
-with an actionable message if the secret is missing when a dispatch is requested. Do not put tokens in issue text.
+repository Actions secret `COPILOT_AGENT_TOKEN` under **Settings → Secrets and variables → Actions**. The dispatch step fails
+with an actionable message if the secret is missing when an assignment is requested. The cloud PR workflow also uses this
+same existing secret only in its trusted PR-creation step: only its `POST /pulls` uses the user-to-server token so required
+CI checks run. Checkout and all untrusted-content steps receive no such secret; the workflow `GITHUB_TOKEN` performs the
+remaining guarded checks and intake. No additional secret is needed. Do not put tokens in issue text.
 
-The `agent-read` repository label is the opt-in switch. On an issue, it starts Architect/Engineer automation. After the
-Engineer pushes the implementation branch, use `/ship-pr agent-read` to create the PR and hand off to PR Review. For work
-that already has an implementation branch but no agent-read issue flow, use `/ship-pr agent-read` to create/reuse the task
-issue and start directly at PR Review. Use `/ship-pr` to create every PR. If no task issue is already
-identified, the skill delegates issue creation to `product-owner-agent` first with Product Owner-style acceptance criteria,
-then creates a PR that includes
-`Closes #<issue>` and `<!-- ship-pr -->`. The skill's guarded `orchestrator.py intake-pr-review` action records the PR head
-SHA and start marker and moves the issue directly to PR Review. `agent-read` is added to the PR only when passed to `/ship-pr`; it is never added to a newly-created task issue. The PR label
-starts the PR Review → QA → merge stages without
-re-running Architect or Engineer:
+The `agent-read` repository label is the opt-in switch. On an issue, it starts Architect/Engineer automation. Input may be
+prefixed with `TAG: agent-read`; the Product Owner consumes that metadata (using `.github/scripts/task_input.py`) and creates
+the issue with `agent-read`, never copying the TAG line into the title/body. Plain `TASK-NAME:` remains the local/default flow;
+`LABEL:BACKLOG,TASK-NAME:` retains its backlog behavior.
+
+For the cloud path, the Engineer pushes `feature/<issue-number>-<task-name-slug>`. The isolated `ci-agent-pr-creation.yml`
+workflow checks the trusted push sender against the GitHub user API, validates branch-to-issue numbering, open issue and
+`agent-read` label, implementation task state and Engineer dispatch, and required Architect approval. It checks out only the
+trusted default branch. The helper checks and reuses an existing conforming PR with the workflow `GITHUB_TOKEN`; for a new PR,
+its single trusted helper step uses `COPILOT_AGENT_TOKEN` only for PR creation (so required CI checks trigger), then uses
+`GITHUB_TOKEN` for the guarded `orchestrator.py intake-pr-review <issue> --pr <pr> --agent-read`. Intake
+removes issue-level `agent-read`, adds it to the PR, and starts the existing PR Review → QA → merge flow. The Engineer never
+creates a PR.
+
+For local work or work with an existing implementation branch but no cloud issue flow, use `/ship-pr agent-read` to
+create/reuse the task issue and PR and start directly at PR Review. That skill uses the same PR template, relation and marker.
+Its guarded intake records the PR head SHA and start marker. The PR label starts review without re-running Architect or Engineer:
 
 1. `architect-agent` posts a design note or auditable skip. If approval is required, the workflow waits for the repository
    owner to post `<!-- architecture-approved -->` with `Approved by @<owner> at <UTC timestamp>`; otherwise it dispatches
    the Engineer after the note.
-2. `senior-java-software-engineer` implements the task, commits and pushes its branch, then hands it back for `/ship-pr`.
-   It does not create a PR. For failure-fix assignments on an existing PR, it pushes the fix to that PR's branch.
+2. `senior-java-software-engineer` implements the task, commits and pushes its branch. For TAG cloud tasks the guarded
+   PR-creation workflow creates/reuses the PR; for local tasks the main agent runs `/ship-pr`. The Engineer never creates a PR.
+   For failure-fix assignments on an existing PR, it pushes the fix to that PR's branch.
 3. When `/ship-pr agent-read` adds the label to the marked PR, `pr-review-agent` and `senior-qa-engineer` are dispatched in order from the corresponding
    status changes. `dod-validator-agent` is never dispatched by the automation (manual only; its status is informational).
    Failed agent gates or required CI checks dispatch the Engineer for a bounded fix iteration.
@@ -36,9 +47,12 @@ re-running Architect or Engineer:
    or reviews. It also checks `needs-human-review`. A five-minute poll handles check completion; a human can remove
    `needs-human-review` to resume a stopped task. After merge it records elapsed time on the issue and PR.
 
-The dispatcher listens for a PR `labeled` event and also polls every five minutes to recover missed dispatches. It ignores
-PRs without the `/ship-pr` marker, an open linked task issue, and `agent-read` on the PR. Issue-level `agent-read` starts
-only the Architect/Engineer task flow; it is not copied to PRs. No `pull_request_target` trigger is used (see `security.md`).
+The dispatcher listens for a PR `labeled` event and also polls every five minutes to recover missed dispatches. The cloud
+PR-creation workflow independently polls every five minutes for its bot-authored authorization comments, revalidates the
+current branch SHA and issue guards, and reuses an existing PR if creation succeeded but intake did not. This recovers from
+interrupted creation/intake and GITHUB_TOKEN-authored labels/comments that do not emit follow-up workflow events. It ignores
+PRs without the `/ship-pr` marker,
+an open linked task issue, and `agent-read` on the PR. No `pull_request_target` trigger is used (see `security.md`).
 
 **Latency:** PR labels added with the user's `gh` credentials trigger the PR-label dispatcher. Labels added by
 `GITHUB_TOKEN` do not trigger workflows, so the five-minute poll (`*/5 * * * *`) is the recovery path. Status and
