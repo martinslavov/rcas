@@ -66,6 +66,7 @@ custom agents. Repository: `martinslavov/rcas`. Record `date +%s` at the start f
 
 ## Loop limits
 
-Each of PR Review, QA and CI-fix has its own bounded loop of 5 rounds (see `.github/copilot-instructions.md`). If the
-label `needs-human-review` is applied, or a gate keeps failing after 5 rounds, stop, summarize the open findings for the user
-and do not merge.
+PR Review and QA failures each have a bounded loop of 5 rounds. The CI-fix loop is stricter: at most 3 attempts, and it stops
+immediately when the failure signature repeats the previous attempt's. The exact counting rules (round markers, signatures)
+are in `.github/copilot-instructions.md`; follow them and do not re-derive them here. If the label `needs-human-review` is
+present, or any limit is reached, stop, summarize the open findings for the user and do not fix, push or merge further.
