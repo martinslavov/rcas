@@ -39,7 +39,7 @@ Pipeline: commit → push → pull request → `pr-review-agent` → `senior-qa-
 | Gates | `PR Review` and `QA Agent` are reset to `pending` after every push and each must be `success` on the current head SHA, in that order |
 | Failures | Blocker/major findings are fixed, pushed and the gates restart; loops are bounded to 5 rounds per gate |
 | Stop | `needs-human-review` label, exhausted rounds, or an empty change: stops and reports, no merge |
-| Merge | Only when all required checks and all agent statuses succeed on the current head SHA, using `gh pr merge --merge --delete-branch` |
+| Merge | Only when all required checks and the `PR Review` and `QA Agent` statuses succeed on the current head SHA (`Definition of Done` is excluded: manual only, not a gate), using `gh pr merge --merge --delete-branch` |
 | Report | PR link, merge status and total elapsed time |
 
 Arguments: `/ship-pr [label[,label...]]`.
