@@ -1,6 +1,6 @@
 ---
 name: senior-qa-engineer
-description: Senior QA Engineer. Reviews and verifies an open pull request for RCAS (tests, edge cases, coverage), reports bugs back to the engineer and sets the `QA Agent` commit status. Use only after pr-review-agent set `PR Review` to success on the current head SHA; hands over to dod-validator-agent.
+description: Senior QA Engineer. Reviews and verifies an open pull request for RCAS (tests, edge cases, coverage), reports bugs back to the engineer and sets the `QA Agent` commit status. Use only after pr-review-agent set `PR Review` to success on the current head SHA; does not hand over to dod-validator-agent (DoD runs only on explicit user request).
 tools: ["read", "edit", "search", "execute"]
 ---
 
