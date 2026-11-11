@@ -70,3 +70,5 @@ PR Review and QA failures each have a bounded loop of 5 rounds. The CI-fix loop 
 immediately when the failure signature repeats the previous attempt's. The exact counting rules (round markers, signatures)
 are in `.github/copilot-instructions.md`; follow them and do not re-derive them here. If the label `needs-human-review` is
 present, or any limit is reached, stop, summarize the open findings for the user and do not fix, push or merge further.
+Only a human removing `needs-human-review` resumes the work: then continue numbering above the original limit without
+re-applying it (keep all round markers); the repeated CI failure signature stop still applies.
