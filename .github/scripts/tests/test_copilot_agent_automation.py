@@ -351,6 +351,16 @@ class CopilotDispatchTest(unittest.TestCase):
             get_dispatches("schedule", {}, api),
         )
 
+    def test_pr_without_review_status_starts_pr_review(self):
+        api = FakeGitHub()
+        api.statuses = []
+        api.issue["labels"] = []
+        api.pr["labels"] = [{"name": ENTRY_LABEL}]
+        self.assertEqual(
+            [Dispatch("pull", 43, "pr-review-agent", "a" * 40)],
+            get_dispatches("schedule", {}, api),
+        )
+
 
 class AutoMergeTest(unittest.TestCase):
     def test_merges_only_when_checks_statuses_and_comments_are_clear(self):

@@ -505,7 +505,7 @@ def _dispatch_from_schedule(api: GitHub) -> list[Dispatch]:
             if not _failure_round_limit_reached(api, pr["number"], "PR Review"):
                 result.append(Dispatch("pull", pr["number"], "senior-java-software-engineer", sha))
             continue
-        if review_state == "pending":
+        if review_state in {None, "pending"}:
             result.append(Dispatch("pull", pr["number"], "pr-review-agent", sha))
             continue
         if review_state == "success":
