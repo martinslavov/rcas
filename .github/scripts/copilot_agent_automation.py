@@ -681,7 +681,7 @@ def assign_to_copilot(api: GitHub, dispatch: Dispatch) -> None:
                $instructions: String!, $customAgent: String!) {
         addAssigneesToAssignable(input: {
           assignableId: $assignable
-          actorIds: [$actor]
+          assigneeIds: [$actor]
           agentAssignment: {
             targetRepositoryId: $repository
             baseRef: $baseRef

@@ -513,6 +513,16 @@ class AssignToCopilotQueryTest(unittest.TestCase):
         self.assertNotIn("issue(number", lookup)
         self.assertEqual(2, len(api.queries))
 
+    def test_assignment_mutation_uses_assignee_ids(self):
+        from copilot_agent_automation import assign_to_copilot
+
+        api = self.GraphQLGitHub()
+        assign_to_copilot(api, Dispatch("pull", 190, "pr-review-agent", "a" * 40))
+
+        mutation = api.queries[1]
+        self.assertIn("assigneeIds: [$actor]", mutation)
+        self.assertNotIn("actorIds", mutation)
+
     def test_issue_dispatch_queries_only_issue(self):
         from copilot_agent_automation import assign_to_copilot
 
