@@ -69,8 +69,7 @@ Evidence must verify the **behaviour**, not merely that code exists.
      `gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=success -f context="Definition of Done" -f description="All <n> acceptance criteria met"`
    - Otherwise (max 140 characters, list the unmet criteria numbers):
      `gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=failure -f context="Definition of Done" -f description="Unmet AC: #2 weak, #4 missing"`
-7. On failure below round 5, the engineer adds the missing evidence (usually tests), pushes and resets `PR Review`, `QA Agent`
-   and `Definition of Done` to `pending`; the PR then goes through PR Review and QA again; DoD is re-run only if the user asks.
+7. A DoD failure is report-only: it does not dispatch the engineer and does not block merge. Any fix happens only after an independent PR Review/QA finding or an explicit user request; DoD is re-run only if the user asks.
 8. Round 5 failure is reported, not a merge block: set `Definition of Done` to `failure` with description
    `DoD iteration limit (5) reached – human review required`
    and post a separate escalation comment mentioning `@martinslavov` with the unmet criteria and round count.
