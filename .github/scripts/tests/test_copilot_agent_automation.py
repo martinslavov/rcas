@@ -8,6 +8,7 @@ from copilot_agent_automation import (
     REQUIRED_CHECKS,
     get_dispatches,
     merge_if_ready,
+    sync_entry_label,
 )
 
 
@@ -317,6 +318,36 @@ class CopilotDispatchTest(unittest.TestCase):
         api = FakeGitHub()
         self.assertEqual(
             [Dispatch("issue", 42, "architect-agent")],
+            get_dispatches("schedule", {}, api),
+        )
+
+    def test_schedule_copies_agent_read_from_issue_to_pr(self):
+        api = FakeGitHub()
+        get_dispatches("schedule", {}, api)
+        self.assertEqual([{"name": ENTRY_LABEL}], api.pr["labels"])
+
+    def test_sync_skips_labeled_closed_or_unlinked(self):
+        api = FakeGitHub()
+        api.pr["labels"] = [{"name": ENTRY_LABEL}]
+        self.assertFalse(sync_entry_label(api, api.pr))
+        api.pr["labels"] = []
+        api.issue["state"] = "closed"
+        self.assertFalse(sync_entry_label(api, api.pr))
+        api.issue["state"] = "open"
+        api.issue["labels"] = []
+        self.assertFalse(sync_entry_label(api, api.pr))
+        api.issue["labels"] = [{"name": ENTRY_LABEL}]
+        api.pr["body"] = "no link"
+        self.assertFalse(sync_entry_label(api, api.pr))
+        self.assertEqual([], api.pr["labels"])
+
+    def test_pr_label_alone_enables_pr_stages(self):
+        api = FakeGitHub()
+        api.issue["labels"] = []
+        api.pr["labels"] = [{"name": ENTRY_LABEL}]
+        next(item for item in api.statuses if item["context"] == "QA Agent")["state"] = "pending"
+        self.assertEqual(
+            [Dispatch("pull", 43, "senior-qa-engineer", "a" * 40)],
             get_dispatches("schedule", {}, api),
         )
 

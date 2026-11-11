@@ -284,9 +284,8 @@ def _task_issue_for_pr(api: GitHub, pr: dict[str, Any]) -> dict[str, Any] | None
     return issue
 
 
-def sync_entry_label(api: GitHub, event: dict[str, Any]) -> bool:
+def sync_entry_label(api: GitHub, pr: dict[str, Any]) -> bool:
     """Copy `agent-read` from the linked open task issue to its PR."""
-    pr = event.get("pull_request") or {}
     number = pr.get("number")
     if (
         not number
@@ -493,6 +492,7 @@ def _dispatch_from_schedule(api: GitHub) -> list[Dispatch]:
 
     ci_checks = tuple(name for name in REQUIRED_CHECKS if name not in {"PR Review", "QA Agent"})
     for pr in api.pages(f"/repos/{api.repository}/pulls?state=open&base=main"):
+        sync_entry_label(api, pr)
         if _task_issue_for_pr(api, pr) is None:
             continue
         sha = pr["head"]["sha"]
@@ -864,9 +864,6 @@ def main() -> int:
         if not read_token:
             raise AutomationError("GITHUB_TOKEN is required to inspect the event")
         read_api = GitHub(read_token, repository)
-        if event_name == "pull_request_target":
-            sync_entry_label(read_api, event)
-            return 0
         for dispatch in get_dispatches(event_name, event, read_api):
             agent_token = os.environ.get("COPILOT_AGENT_TOKEN")
             if not agent_token:

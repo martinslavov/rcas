@@ -5,8 +5,6 @@ on:
     types: [labeled, unlabeled]
   issue_comment:
     types: [created, edited]
-  pull_request_target:
-    types: [opened, reopened, edited]
   status:
   check_suite:
     types: [completed]
@@ -24,7 +22,6 @@ jobs:
     if: >-
       github.event_name == 'issues' ||
       github.event_name == 'issue_comment' ||
-      github.event_name == 'pull_request_target' ||
       github.event_name == 'status' ||
       github.event_name == 'check_suite' ||
       github.event_name == 'schedule'
@@ -33,7 +30,7 @@ jobs:
     permissions:
       contents: read
       issues: write
-      pull-requests: write
+      pull-requests: read
       checks: read
       statuses: read
 

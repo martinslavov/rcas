@@ -9,12 +9,12 @@ repository Actions secret `COPILOT_AGENT_TOKEN` under **Settings → Secrets and
 with an actionable message if the secret is missing when a dispatch is requested. Do not put tokens in issue text.
 
 The `agent-read` repository label is the opt-in switch. It is read on the issue (starts the Architect/Engineer stages) or on the PR (enables the PR Review → QA → DoD → merge stages for the linked issue); either level is sufficient for PR stages.
-When a PR that references an `agent-read` issue (`Closes #N`) is opened, reopened or edited, the dispatch workflow copies
-the label to the PR automatically (`pull_request_target`, trusted default-branch code only).
+The five-minute poll also copies the label from the linked open `agent-read` issue (`Closes #N`) to its PR. No
+`pull_request_target` trigger is used (see `security.md`).
 
 **Latency:** labels added by `GITHUB_TOKEN` do not trigger workflows, and a label added manually to a PR only is not an
-event the dispatcher reacts to. In both cases the next stage starts at the nearest five-minute poll (`*/5 * * * *`), not
-immediately. Status and check-suite events still dispatch the following stages immediately. Create an issue using the normal issue template, include
+event the dispatcher reacts to. The label copy and the next stage therefore start at the nearest five-minute poll
+(`*/5 * * * *`), not immediately. Status and check-suite events still dispatch the following stages immediately.
 acceptance criteria, then apply `agent-read` to start the flow:
 
 1. `architect-agent` posts a design note or auditable skip. If approval is required, the workflow waits for the repository
