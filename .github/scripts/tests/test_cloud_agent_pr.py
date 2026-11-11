@@ -54,6 +54,11 @@ class FakeGitHubApi:
         self.branch_sha = SHA
         self.prs = []
         self.requests = []
+        self.events = [{
+            "type": "PushEvent",
+            "actor": {"login": "copilot-swe-agent", "id": 88},
+            "payload": {"ref": "refs/heads/" + BRANCH, "head": SHA},
+        }]
 
     def pages(self, path):
         if (path.startswith("/repos/martinslavov/rcas/issues?state=open&labels=agent-read")
@@ -72,6 +77,8 @@ class FakeGitHubApi:
 
     def request(self, method, path, body=None):
         self.requests.append((method, path, body))
+        if path.startswith("/repos/martinslavov/rcas/events"):
+            return list(self.events)
         if path == "/users/copilot-swe-agent":
             return {"login": "copilot-swe-agent", "id": 88, "type": "Bot"}
         if path.startswith("/repos/martinslavov/rcas/branches/feature%2F"):
@@ -175,6 +182,65 @@ class CloudAgentPrTest(unittest.TestCase):
                    if call[0] == "POST" and call[1] == "/repos/martinslavov/rcas/pulls"]
         self.assertEqual(1, len(created))
         self.assertEqual(2, len(self.calls))
+
+    def run_schedule(self, api=None):
+        api = api or self.api
+        with patch.dict("os.environ", {"GITHUB_TOKEN": "t", "COPILOT_AGENT_TOKEN": "c"}):
+            return api, run("schedule", {}, api, self.root, self.runner, FakePrCreationApi(api))
+
+    def created_prs(self, api):
+        return [r for r in api.requests if r[0] == "POST" and r[1] == "/repos/martinslavov/rcas/pulls"]
+
+    def test_schedule_alone_discovers_fresh_push_and_creates_exactly_one_pr(self):
+        self.assertFalse(any("cloud-agent-pr-authorized:" in c["body"] for c in self.api.comments))
+
+        _, result = self.run_schedule()
+
+        self.assertTrue(result)
+        self.assertEqual(1, len(self.created_prs(self.api)))
+        self.assertEqual(1, len(self.calls))
+        self.assertEqual(["intake-pr-review", "42", "--pr", "43", "--agent-read"], self.calls[0][0][-5:])
+        self.assertNotIn("COPILOT_AGENT_TOKEN", self.calls[0][1]["env"])
+        self.run_schedule()
+        self.assertEqual(1, len(self.created_prs(self.api)))
+
+    def test_schedule_discovery_rejections(self):
+        def forged_actor(api):
+            api.events[0]["actor"] = {"login": "martinslavov", "id": 99}
+
+        def wrong_actor_id(api):
+            api.events[0]["actor"]["id"] = 99
+
+        def stale_sha(api):
+            api.branch_sha = "b" * 40
+
+        def not_feature(api):
+            api.events[0]["payload"]["ref"] = "refs/heads/topic/42-cloud-flow"
+
+        def other_issue(api):
+            api.events[0]["payload"]["ref"] = "refs/heads/feature/43-cloud-flow"
+
+        def unapproved(api):
+            api.comments = [c for c in api.comments if "architecture-approved" not in c["body"]]
+
+        def backlog(api):
+            api.issue["labels"].append({"name": "backlog"})
+
+        def no_events(api):
+            api.events = []
+
+        for mutate in (forged_actor, wrong_actor_id, stale_sha, not_feature, other_issue,
+                       unapproved, backlog, no_events):
+            with self.subTest(case=mutate.__name__):
+                api = FakeGitHubApi()
+                mutate(api)
+                self.calls = []
+                self.run_schedule(api)
+                self.assertEqual([], self.created_prs(api))
+                self.assertEqual([], self.calls)
+                self.assertFalse(any("cloud-agent-pr-authorized:" in c["body"] for c in api.comments
+                                     if c["user"]["login"] == "github-actions[bot]"
+                                     and "created_at" in c))
 
     def test_new_pr_requires_copilot_token_before_creation(self):
         with patch.dict("os.environ", {"GITHUB_TOKEN": "workflow-token"}, clear=True):

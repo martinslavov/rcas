@@ -412,10 +412,45 @@ def _handle_push(api: GitHubApi, event: dict[str, Any], root: Path,
     )
 
 
+def _discover_pushes(api: GitHubApi) -> list[dict[str, Any]]:
+    """Return the newest GitHub-recorded push per feature branch, as push-like events.
+
+    The repository events feed is written by GitHub, so the actor identity is not forgeable
+    commit text. Each result is re-verified (actor via the Users API, branch, issue, current
+    SHA, approvals) by ``_handle_push`` before anything is authorized.
+    """
+    events = api.request("GET", f"/repos/{api.repository}/events?per_page=100")
+    if not isinstance(events, list):
+        return []
+    newest: dict[str, dict[str, Any]] = {}
+    for item in events:
+        payload = item.get("payload") if isinstance(item, dict) else None
+        if item.get("type") != "PushEvent" or not isinstance(payload, dict):
+            continue
+        ref, head = payload.get("ref"), payload.get("head")
+        actor = item.get("actor") or {}
+        if not isinstance(ref, str) or not isinstance(head, str) or not ref.startswith("refs/heads/"):
+            continue
+        branch = ref.removeprefix("refs/heads/")
+        if _branch_details(branch) is None or branch in newest:
+            continue
+        newest[branch] = {"ref": ref, "after": head,
+                          "sender": {"login": actor.get("login"), "id": actor.get("id")}}
+    return list(newest.values())
+
+
 def _handle_schedule(api: GitHubApi, root: Path,
                      runner: Callable[..., subprocess.CompletedProcess[str]],
                      pr_creation_api: GitHubApi | None) -> bool:
     completed = False
+    handled: set[tuple[str, str]] = set()
+    first_error: CloudPrError | None = None
+    for push in _discover_pushes(api):
+        handled.add((push["ref"].removeprefix("refs/heads/"), push["after"]))
+        try:
+            completed = _handle_push(api, push, root, runner, pr_creation_api) or completed
+        except CloudPrError as error:
+            first_error = first_error or error
     issues: dict[int, dict[str, Any]] = {}
     for label in (ENTRY_LABEL, "state:pr-review"):
         query = urllib.parse.urlencode({"state": "open", "labels": label})
@@ -437,9 +472,16 @@ def _handle_schedule(api: GitHubApi, root: Path,
             ):
                 latest_by_branch[branch] = record
         for record in latest_by_branch.values():
-            completed = _process_authorized(
-                api, issue, comments, record, root, runner, pr_creation_api
-            ) or completed
+            if (record.get("branch"), record.get("sha")) in handled:
+                continue
+            try:
+                completed = _process_authorized(
+                    api, issue, comments, record, root, runner, pr_creation_api
+                ) or completed
+            except CloudPrError as error:
+                first_error = first_error or error
+    if first_error is not None:
+        raise first_error
     return completed
 
 
