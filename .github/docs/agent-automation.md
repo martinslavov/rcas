@@ -45,5 +45,5 @@ token permissions, disabled cloud agent, or a GitHub API assignment error.
 orchestrator task-state record with `orchestrator.py init <issue> --state backlog|todo --agent human` (`backlog` when the
 issue has the `backlog` label, otherwise `todo`). Issues created directly with `gh issue create` or the web form therefore
 also get a `state:*` label and canonical record, so later `orchestrator.py transition` calls do not fail. If the Product
-Owner already seeded a record, the step is a no-op. Issues opened before this workflow change are not backfilled; seed
+Owner already seeded a record, the step is a no-op. The step authenticates repository calls (comment, labels) with the job `GITHUB_TOKEN` (`issues: write`); `PROJECT_TOKEN` is passed only as `PROJECT_TOKEN` and used by `task_queue.sh` for the Projects GraphQL calls. Issues opened before this workflow change are not backfilled; seed
 them manually with `orchestrator.py init`.
