@@ -38,3 +38,12 @@ event the dispatcher reacts to. The label copy and the next stage therefore star
 The workflows check out only the default branch and do not execute issue or PR content while handling the Copilot token
 or merge permissions. If dispatch fails, inspect the `Copilot Agent Dispatch` run for a missing token, insufficient
 token permissions, disabled cloud agent, or a GitHub API assignment error.
+
+## Task-state record for every issue
+
+`Issue Board Tracking` (`ci-issue-board.yml`) runs on every opened issue. After placing it on the board it seeds the
+orchestrator task-state record with `orchestrator.py init <issue> --state backlog|todo --agent human` (`backlog` when the
+issue has the `backlog` label, otherwise `todo`). Issues created directly with `gh issue create` or the web form therefore
+also get a `state:*` label and canonical record, so later `orchestrator.py transition` calls do not fail. If the Product
+Owner already seeded a record, the step is a no-op. Issues opened before this workflow change are not backfilled; seed
+them manually with `orchestrator.py init`.

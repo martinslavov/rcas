@@ -10,10 +10,16 @@ jobs:
   add-to-board:
     if: ${{ !contains(github.event.issue.body, '<!-- agent-dashboard -->') }}
     runs-on: ubuntu-latest
-    # Only PROJECT_TOKEN is used; the workflow token needs no scopes.
-    permissions: {}
+    permissions:
+      contents: read
 
     steps:
+      - name: Checkout trusted default-branch automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
       - name: Add issue to RCAS Tracking board as Backlog or TODO
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
@@ -30,3 +36,20 @@ jobs:
           gh api graphql \
             -f query='mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) { updateProjectV2ItemFieldValue(input: {projectId: $project, itemId: $item, fieldId: $field, value: {singleSelectOptionId: $option}}) { projectV2Item { id } } }' \
             -f project="$project_id" -f item="$item_id" -f field="$field_id" -f option="$option_id"
+
+      - name: Seed the orchestrator task-state record
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          STATE: ${{ contains(github.event.issue.labels.*.name, 'backlog') && 'backlog' || 'todo' }}
+        run: |
+          # Every issue gets a state record, even when it was not created by the Product Owner.
+          # An existing record (seeded by the Product Owner) is not an error.
+          if ! out=$(python3 .github/scripts/orchestrator.py init "$ISSUE_NUMBER" --state "$STATE" --agent human 2>&1); then
+            if grep -q "already has a task-state record" <<< "$out"; then
+              echo "task-state record already exists for #$ISSUE_NUMBER"
+            else
+              echo "$out" >&2
+              exit 1
+            fi
+          fi
