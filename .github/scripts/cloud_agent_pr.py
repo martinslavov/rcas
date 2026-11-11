@@ -412,30 +412,99 @@ def _handle_push(api: GitHubApi, event: dict[str, Any], root: Path,
     )
 
 
-def _discover_pushes(api: GitHubApi) -> list[dict[str, Any]]:
+EVENTS_MAX_PAGES = 10  # GitHub exposes at most 300 repository events (10 pages of 30-100)
+
+
+def _push_candidate(ref: Any, head: Any, actor: Any) -> dict[str, Any] | None:
+    if not isinstance(ref, str) or not isinstance(head, str) or not ref.startswith("refs/heads/"):
+        return None
+    if _branch_details(ref.removeprefix("refs/heads/")) is None:
+        return None
+    actor = actor if isinstance(actor, dict) else {}
+    return {"ref": ref, "after": head,
+            "sender": {"login": actor.get("login"), "id": actor.get("id")}}
+
+
+def _scan_events(api: GitHubApi, newest: dict[str, dict[str, Any]]) -> None:
+    """Add the newest push per feature branch from every page the events feed offers."""
+    for page in range(1, EVENTS_MAX_PAGES + 1):
+        try:
+            events = api.request("GET", f"/repos/{api.repository}/events?per_page=100&page={page}")
+        except CloudPrError:
+            if page == 1:
+                raise
+            return  # beyond the feed limit; the durable fallback covers older pushes
+        if not isinstance(events, list):
+            return
+        for item in events:
+            payload = item.get("payload") if isinstance(item, dict) else None
+            if not isinstance(payload, dict) or item.get("type") != "PushEvent":
+                continue
+            candidate = _push_candidate(payload.get("ref"), payload.get("head"), item.get("actor"))
+            if candidate is not None:
+                newest.setdefault(candidate["ref"].removeprefix("refs/heads/"), candidate)
+        if len(events) < 100:
+            return
+
+
+def _open_task_issues(api: GitHubApi) -> dict[int, dict[str, Any]]:
+    issues: dict[int, dict[str, Any]] = {}
+    for label in (ENTRY_LABEL, "state:pr-review"):
+        query = urllib.parse.urlencode({"state": "open", "labels": label})
+        for issue in api.pages(f"/repos/{api.repository}/issues?{query}"):
+            if "pull_request" not in issue and isinstance(issue.get("number"), int):
+                issues[issue["number"]] = issue
+    return issues
+
+
+def _scan_branch_activity(api: GitHubApi, issues: dict[int, dict[str, Any]],
+                          newest: dict[str, dict[str, Any]]) -> None:
+    """Durable fallback: ask GitHub's per-branch push activity for open task issues.
+
+    The activity feed is written by GitHub (actor is not commit text) and is not limited
+    to the newest events, so an old push is still found. Failures for one branch (deleted
+    branch, no activity, rate limit) only skip that branch; the next poll retries it.
+    """
+    for issue_number in sorted(issues):
+        try:
+            refs = api.pages(f"/repos/{api.repository}/git/matching-refs/heads/feature/{issue_number}-")
+        except CloudPrError as error:
+            print(f"branch discovery skipped for issue #{issue_number}: {error}", file=sys.stderr)
+            continue
+        for item in refs:
+            ref = item.get("ref") if isinstance(item, dict) else None
+            if not isinstance(ref, str) or ref.removeprefix("refs/heads/") in newest:
+                continue
+            details = _branch_details(ref.removeprefix("refs/heads/"))
+            if details is None or details[0] != issue_number:
+                continue
+            query = urllib.parse.urlencode(
+                {"ref": ref, "activity_type": "push", "per_page": 1})
+            try:
+                activity = api.request("GET", f"/repos/{api.repository}/activity?{query}")
+            except CloudPrError as error:
+                print(f"push activity skipped for {ref}: {error}", file=sys.stderr)
+                continue
+            if not isinstance(activity, list) or not activity or not isinstance(activity[0], dict):
+                continue
+            latest = activity[0]
+            if latest.get("ref") != ref:
+                continue
+            candidate = _push_candidate(ref, latest.get("after"), latest.get("actor"))
+            if candidate is not None:
+                newest[ref.removeprefix("refs/heads/")] = candidate
+
+
+def _discover_pushes(api: GitHubApi, issues: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
     """Return the newest GitHub-recorded push per feature branch, as push-like events.
 
-    The repository events feed is written by GitHub, so the actor identity is not forgeable
-    commit text. Each result is re-verified (actor via the Users API, branch, issue, current
-    SHA, approvals) by ``_handle_push`` before anything is authorized.
+    Actor identity comes from GitHub's events/activity feeds, never from forgeable commit
+    text. Each result is re-verified (actor via the Users API, branch, issue, current SHA,
+    approvals) by ``_handle_push`` before anything is authorized.
     """
-    events = api.request("GET", f"/repos/{api.repository}/events?per_page=100")
-    if not isinstance(events, list):
-        return []
     newest: dict[str, dict[str, Any]] = {}
-    for item in events:
-        payload = item.get("payload") if isinstance(item, dict) else None
-        if item.get("type") != "PushEvent" or not isinstance(payload, dict):
-            continue
-        ref, head = payload.get("ref"), payload.get("head")
-        actor = item.get("actor") or {}
-        if not isinstance(ref, str) or not isinstance(head, str) or not ref.startswith("refs/heads/"):
-            continue
-        branch = ref.removeprefix("refs/heads/")
-        if _branch_details(branch) is None or branch in newest:
-            continue
-        newest[branch] = {"ref": ref, "after": head,
-                          "sender": {"login": actor.get("login"), "id": actor.get("id")}}
+    _scan_events(api, newest)
+    _scan_branch_activity(api, issues, newest)
     return list(newest.values())
 
 
@@ -445,18 +514,13 @@ def _handle_schedule(api: GitHubApi, root: Path,
     completed = False
     handled: set[tuple[str, str]] = set()
     first_error: CloudPrError | None = None
-    for push in _discover_pushes(api):
+    issues = _open_task_issues(api)
+    for push in _discover_pushes(api, issues):
         handled.add((push["ref"].removeprefix("refs/heads/"), push["after"]))
         try:
             completed = _handle_push(api, push, root, runner, pr_creation_api) or completed
         except CloudPrError as error:
             first_error = first_error or error
-    issues: dict[int, dict[str, Any]] = {}
-    for label in (ENTRY_LABEL, "state:pr-review"):
-        query = urllib.parse.urlencode({"state": "open", "labels": label})
-        for issue in api.pages(f"/repos/{api.repository}/issues?{query}"):
-            if "pull_request" not in issue and isinstance(issue.get("number"), int):
-                issues[issue["number"]] = issue
     for issue in issues.values():
         if "pull_request" in issue or not isinstance(issue.get("number"), int):
             continue

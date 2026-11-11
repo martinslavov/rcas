@@ -19,7 +19,7 @@ the issue with `agent-read`, never copying the TAG line into the title/body. Pla
 For the cloud path, the Engineer pushes `feature/<issue-number>-<task-name-slug>`. The isolated `ci-agent-pr-creation.yml`
 workflow runs only from its trusted default-branch five-minute schedule; feature-branch pushes cannot execute its workflow
 YAML with access to `COPILOT_AGENT_TOKEN`. Each scheduled poll itself discovers eligible work: it reads the newest `PushEvent` per `feature/<issue>-*` branch
-from the GitHub repository events feed (actor identity is recorded by GitHub, never taken from commit author text), then
+from the GitHub repository events feed (all pages GitHub exposes, up to 300 events; actor identity is recorded by GitHub, never taken from commit author text). As a durable fallback for pushes that aged out of that feed, it lists the `feature/<issue>-*` branches of open `agent-read` issues and reads each branch's GitHub push activity (`/activity?ref=…&activity_type=push`); a branch that fails (deleted, rate limited) is skipped and retried on the next poll. It then
 writes an authorization record only after re-validating it, and also retries queued records. It validates the expected
 actor and id against the GitHub user API, that the pushed SHA is still the branch head, feature-branch-to-issue numbering, the open issue and `agent-read` label, implementation task
 state, Engineer dispatch, and required Architect approval. It checks out only the trusted default branch. The helper

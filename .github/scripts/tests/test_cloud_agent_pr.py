@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from cloud_agent_pr import SHIP_PR_MARKER, run
+from cloud_agent_pr import SHIP_PR_MARKER, CloudPrError, run
 
 
 SHA = "a" * 40
@@ -54,6 +54,9 @@ class FakeGitHubApi:
         self.branch_sha = SHA
         self.prs = []
         self.requests = []
+        self.activity = []
+        self.refs = [{"ref": "refs/heads/" + BRANCH}]
+        self.events_pages = None
         self.events = [{
             "type": "PushEvent",
             "actor": {"login": "copilot-swe-agent", "id": 88},
@@ -71,6 +74,8 @@ class FakeGitHubApi:
             return list(self.comments)
         if path.startswith("/repos/martinslavov/rcas/issues/43/comments"):
             return []
+        if path.startswith("/repos/martinslavov/rcas/git/matching-refs/heads/feature/42-"):
+            return list(self.refs)
         if "/pulls?state=open&head=" in path:
             return list(self.prs)
         return []
@@ -78,7 +83,14 @@ class FakeGitHubApi:
     def request(self, method, path, body=None):
         self.requests.append((method, path, body))
         if path.startswith("/repos/martinslavov/rcas/events"):
+            if self.events_pages is not None:
+                page = int(path.rsplit("page=", 1)[1])
+                if page > len(self.events_pages):
+                    raise CloudPrError("HTTP 422")
+                return list(self.events_pages[page - 1])
             return list(self.events)
+        if path.startswith("/repos/martinslavov/rcas/activity?"):
+            return list(self.activity)
         if path == "/users/copilot-swe-agent":
             return {"login": "copilot-swe-agent", "id": 88, "type": "Bot"}
         if path.startswith("/repos/martinslavov/rcas/branches/feature%2F"):
@@ -203,6 +215,37 @@ class CloudAgentPrTest(unittest.TestCase):
         self.assertNotIn("COPILOT_AGENT_TOKEN", self.calls[0][1]["env"])
         self.run_schedule()
         self.assertEqual(1, len(self.created_prs(self.api)))
+
+    def test_schedule_discovers_push_beyond_first_events_page(self):
+        api = FakeGitHubApi()
+        noise = {"type": "WatchEvent", "actor": {"login": "x", "id": 1}, "payload": {}}
+        api.events_pages = [[noise] * 100, [noise] * 100, api.events]
+
+        _, result = self.run_schedule(api)
+
+        self.assertTrue(result)
+        self.assertEqual(1, len(self.created_prs(api)))
+
+    def test_schedule_falls_back_to_branch_activity_when_push_aged_out_of_events(self):
+        api = FakeGitHubApi()
+        api.activity = [{"ref": "refs/heads/" + BRANCH, "after": SHA,
+                         "actor": {"login": "copilot-swe-agent", "id": 88}}]
+        api.events = []
+
+        _, result = self.run_schedule(api)
+
+        self.assertTrue(result)
+        self.assertEqual(1, len(self.created_prs(api)))
+
+    def test_activity_fallback_rejects_forged_actor_and_empty_activity(self):
+        for activity in ([{"ref": "refs/heads/" + BRANCH, "after": SHA,
+                           "actor": {"login": "martinslavov", "id": 99}}], []):
+            api = FakeGitHubApi()
+            api.events = []
+            api.activity = activity
+            self.calls = []
+            self.run_schedule(api)
+            self.assertEqual([], self.created_prs(api))
 
     def test_schedule_discovery_rejections(self):
         def forged_actor(api):
