@@ -10,7 +10,7 @@
 
 A read goes through the caches first and only falls back to the database on a miss, so repeated requests are served without hitting PostgreSQL. All layers are non-blocking, which keeps the service responsive under load with a small number of threads.
 
-Cache entries in Caffeine and Redis expire after access. Configure the shared expiration with `cache.expiration.hours` (24 hours by default).
+Cache entries in Caffeine and Redis expire after access, with independent inactivity windows. Caffeine (L1) entries expire after 5 minutes by default; configure this with `cache.caffeine.expiration.minutes`. Redis (L2) entries expire after 24 hours by default; configure this separately with `cache.expiration.hours`. An access restarts the expiration window for that cache layer.
 
 Every cache lookup is logged at `INFO` as `HIT` or `MISS` per layer (Caffeine, then Redis). Cache writes are logged at `DEBUG` by the dedicated logger `com.gbp.rcas.cache.write`, so they are off by default; enable them with `logging.level.com.gbp.rcas.cache.write=DEBUG` (or the env var `LOGGING_LEVEL_COM_GBP_RCAS_CACHE_WRITE=DEBUG`).
 

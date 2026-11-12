@@ -1,6 +1,7 @@
 package com.gbp.rcas.config;
 
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Ticker;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.CacheManager;
@@ -18,15 +19,19 @@ import static com.gbp.rcas.config.Constants.CACHE_NAME_SUBSCRIPTION;
 @EnableCaching
 public class CaffeineCacheConfig {
 
-    @Value("${cache.expiration.hours:24}")
-    private int cacheExpiration;
+    @Value("${cache.caffeine.expiration.minutes:5}")
+    private long cacheExpirationMinutes;
 
     @Bean
     public CacheManager cacheManager() {
+        return cacheManager(Ticker.systemTicker());
+    }
+
+    CacheManager cacheManager(Ticker ticker) {
         Caffeine<Object, Object> caffeineCacheBuilder =
                 Caffeine.newBuilder()
-                        .expireAfterAccess(
-                                cacheExpiration, TimeUnit.HOURS);
+                        .ticker(ticker)
+                        .expireAfterAccess(cacheExpirationMinutes, TimeUnit.MINUTES);
 
         CaffeineCacheManager cacheManager =
                 new CaffeineCacheManager(
