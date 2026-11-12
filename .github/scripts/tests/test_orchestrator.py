@@ -82,6 +82,33 @@ class OrchestratorStateMachineTests(unittest.TestCase):
         with self.assertRaisesRegex(OrchestratorError, "cannot transition"):
             validate_transition(self.record("architecture"), "implementation", "senior-java-software-engineer")
 
+    def test_skip_architect_allows_direct_todo_to_implementation(self):
+        record = self.record("todo")
+        with self.assertRaisesRegex(OrchestratorError, "not allowed"):
+            transition_record(record, "implementation", "senior-java-software-engineer")
+
+        updated = transition_record(
+            record, "implementation", "senior-java-software-engineer", skip_architect=True)
+        self.assertEqual("implementation", updated["state"])
+        self.assertEqual("senior-java-software-engineer", updated["owner_agent"])
+
+    def test_orchestrator_requires_skip_architect_label_for_bypass(self):
+        state = self.record("todo")
+        comments = json.dumps({
+            "id": 101,
+            "body": serialize_record(state),
+            "author": "martinslavov",
+        })
+        runner = Mock(side_effect=[comments, "skip-architect"])
+        orchestrator = Orchestrator(runner)
+
+        updated = orchestrator.transition(
+            101, "implementation", "senior-java-software-engineer", None, dry_run=True)
+
+        self.assertEqual("implementation", updated["state"])
+        self.assertEqual(2, runner.call_count)
+        self.assertIn("issues/101/labels", runner.call_args_list[1].args[0][-1])
+
     def test_rejected_pure_requests_make_zero_gh_calls(self):
         runner = Mock()
         orchestrator = Orchestrator(runner)

@@ -353,6 +353,22 @@ class CloudAgentPrTest(unittest.TestCase):
         self.assertFalse(any("cloud-agent-pr-authorized:" in comment["body"] for comment in self.api.comments))
         self.assertEqual([], self.calls)
 
+    def test_skip_architect_label_bypasses_architecture_note_and_approval(self):
+        self.api.issue["labels"].append({"name": "skip-architect"})
+        self.api.comments = [
+            comment for comment in self.api.comments
+            if "architect-design-note" not in comment["body"]
+            and "architecture-approved" not in comment["body"]
+        ]
+
+        with patch.dict("os.environ", {
+            "GITHUB_TOKEN": "test-token",
+            "COPILOT_AGENT_TOKEN": "copilot-token",
+        }):
+            self.assertTrue(run(
+                "push", self.event, self.api, self.root, self.runner, self.pr_creation_api))
+        self.assertEqual(1, len(self.created_prs(self.api)))
+
     def test_design_note_requires_approval_even_without_approval_label(self):
         self.api.issue["labels"] = [label for label in self.api.issue["labels"]
                                     if label["name"] != "architecture-approval-required"]

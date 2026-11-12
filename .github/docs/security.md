@@ -63,7 +63,8 @@ uses it only for the `POST /pulls` that creates a new PR, so GitHub starts the r
 markers, existing-PR validation and guarded intake use the workflow `GITHUB_TOKEN`. Reused PRs do not require the Copilot token.
 Its secret-bearing path is schedule-only on the trusted default branch (there is no feature-branch `push` trigger); the
 poll discovers pushes from the paginated GitHub events API and, as fallback, the per-branch push activity API (trusted actor/ref/head, not forgeable commit text) and validates the expected Copilot actor against the GitHub Users API and checks the feature branch has the issue-number prefix.
-It also requires the open issue opt-in, `implementation` task state, Engineer dispatch, and design-note/approval guards. The
+It also requires the open issue opt-in, `implementation` task state, and Engineer dispatch; design-note/approval guards
+apply unless the issue explicitly has `skip-architect`. The
 five-minute default-branch schedule recovers an interrupted create/intake using only an unedited bot-authored marker bound
 to the issue, actor and current branch SHA. The dispatch workflow `GITHUB_TOKEN` inspects event targets and records bounded
 CI fix attempts, human-review labels and escalation comments; it uses
@@ -72,7 +73,7 @@ The dispatch token is not passed to the merge workflow.
 Auto-merge checks the current PR head, linked `agent-read` issue, all required status/check contexts plus Definition of
 Done, the `needs-human-review` label, and human PR comments/reviews before calling the merge API. The merge job checks out
 only the default branch and runs no PR-controlled code. It records task elapsed time after merge from the start marker
-written when Architect is dispatched. The dispatcher and auto-merge workflows poll open agent-read PRs every five minutes; the PR-creation workflow polls its
+written at the first Architect or Engineer dispatch. The dispatcher and auto-merge workflows poll open agent-read PRs every five minutes; the PR-creation workflow polls its
 authorized issue/branch records on the same interval. Stage dispatch, intake recovery and merge therefore do not depend on
 follow-up events emitted by Actions runs.
 

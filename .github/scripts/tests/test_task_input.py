@@ -15,6 +15,29 @@ class TaskInputTest(unittest.TestCase):
         self.assertEqual(("agent-read",), parsed.labels)
         self.assertNotIn("TAG:", parsed.description)
 
+    def test_development_and_multiple_tags_become_issue_labels(self):
+        parsed = parse_task_input(
+            "TASK-NAME:cloud-flow\n"
+            "DEVELOPMENT: high\n"
+            "TAG: agent-read,skip-architect,skip-product-owner\n"
+            "DESCRIPTION: Do the work")
+
+        self.assertEqual("Do the work", parsed.description)
+        self.assertEqual(
+            ("agent-read", "skip-architect", "skip-product-owner", "development:high"),
+            parsed.labels)
+
+    def test_supported_tags_can_be_used_independently(self):
+        parsed = parse_task_input("TASK-NAME:task\nTAG: skip-architect\nDo this")
+
+        self.assertEqual(("skip-architect",), parsed.labels)
+        self.assertEqual("Do this", parsed.description)
+
+    def test_development_is_optional_and_case_insensitive(self):
+        parsed = parse_task_input("TASK-NAME:task\nDEVELOPMENT: Medium\nDo this")
+
+        self.assertEqual(("development:medium",), parsed.labels)
+
     def test_plain_task_name_keeps_local_default(self):
         parsed = parse_task_input("TASK-NAME:cloud-flow\nDo the work")
 
@@ -66,6 +89,10 @@ class TaskInputTest(unittest.TestCase):
             "TAG: agent-read extra\nTASK-NAME:task",
             "TASK-NAME:task\nTAG: other",
             "TASK-NAME:task\nTAG: agent-read extra",
+            "TASK-NAME:task\nTAG: agent-read,other",
+            "TASK-NAME:task\nTAG: agent-read, skip-architect",
+            "TASK-NAME:task\nDEVELOPMENT: hight",
+            "TASK-NAME:task\nDEVELOPMENT: low\nDEVELOPMENT: high",
             "TAG: agent-read\nnot-a-task",
             "TASK-NAME:",
             "LABEL:BACKLOG,TASK-NAME:   ",

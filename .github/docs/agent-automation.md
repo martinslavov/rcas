@@ -12,10 +12,14 @@ CI checks run. Checkout and all untrusted-content steps receive no such secret; 
 remaining guarded checks and intake. No additional secret is needed. Do not put tokens in issue text.
 
 The `agent-read` repository label is the opt-in switch. On an issue, it starts Architect/Engineer automation. Canonical task
-input starts with `TASK-NAME:<name>`, with optional `TAG: agent-read` on line 2 and a description after that (optionally
-introduced by `DESCRIPTION:`). The Product Owner consumes that metadata using `.github/scripts/task_input.py` and creates the
-issue with `agent-read`, never copying the TAG control line into the title/body. The legacy first-line TAG order remains
-accepted. `LABEL:BACKLOG,TASK-NAME:` retains its backlog behavior and may also have TAG on line 2.
+input starts with `TASK-NAME:<name>`, optionally followed by `DEVELOPMENT: low|medium|high` and
+`TAG: agent-read,skip-architect,skip-product-owner` (any supported subset), then a description (optionally introduced by
+`DESCRIPTION:`). `.github/scripts/task_input.py` consumes this metadata; `DEVELOPMENT` becomes a `development:<level>`
+issue label, and control lines are never copied into the issue title/body. `skip-product-owner` tells the main agent to
+create a concise task issue directly instead of invoking Product Owner. `skip-architect` starts Engineer directly and
+explicitly bypasses architecture comments and approval, including the `architecture-approval-required` gate. This opt-out
+does not bypass cloud branch/actor verification, PR creation safeguards, CI, PR Review, QA or merge gates. The legacy
+first-line TAG order remains accepted. `LABEL:BACKLOG,TASK-NAME:` retains its backlog behavior and may also have metadata.
 
 For the cloud path, the Engineer pushes `feature/<issue-number>-<task-name-slug>`. The isolated `ci-agent-pr-creation.yml`
 workflow runs only from its trusted default-branch five-minute schedule; feature-branch pushes cannot execute its workflow
@@ -23,7 +27,7 @@ YAML with access to `COPILOT_AGENT_TOKEN`. Each scheduled poll itself discovers 
 from the GitHub repository events feed (all pages GitHub exposes, up to 300 events; actor identity is recorded by GitHub, never taken from commit author text). As a durable fallback for pushes that aged out of that feed, it lists the `feature/<issue>-*` branches of open `agent-read` issues and reads each branch's GitHub push activity (`/activity?ref=…&activity_type=push`); a branch that fails (deleted, rate limited) is skipped and retried on the next poll. It then
 writes an authorization record only after re-validating it, and also retries queued records. It validates the expected
 actor and id against the GitHub user API, that the pushed SHA is still the branch head, feature-branch-to-issue numbering, the open issue and `agent-read` label, implementation task
-state, Engineer dispatch, and required Architect approval. It checks out only the trusted default branch. The helper
+state, Engineer dispatch, and required Architect approval unless `skip-architect` is present. It checks out only the trusted default branch. The helper
 reuses a conforming PR with the workflow `GITHUB_TOKEN`; for a new PR, its single trusted helper step uses
 `COPILOT_AGENT_TOKEN` only for PR creation (so required CI checks trigger), then uses
 `GITHUB_TOKEN` for the guarded `orchestrator.py intake-pr-review <issue> --pr <pr> --agent-read`. Intake
@@ -38,7 +42,8 @@ Its guarded intake records the PR head SHA and start marker. The PR label starts
 
 1. `architect-agent` posts a design note or auditable skip. If approval is required, the workflow waits for the repository
    owner to post `<!-- architecture-approved -->` with `Approved by @<owner> at <UTC timestamp>`; otherwise it dispatches
-   the Engineer after the note.
+   the Engineer after the note. With `skip-architect`, it dispatches Engineer directly and the explicit label bypasses
+   this architecture approval gate.
 2. `senior-java-software-engineer` implements the task, commits and pushes its branch. For TAG cloud tasks the guarded
    PR-creation workflow creates/reuses the PR; for local tasks the main agent runs `/ship-pr`. The Engineer never creates a PR.
    For failure-fix assignments on an existing PR, it pushes the fix to that PR's branch.

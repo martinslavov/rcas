@@ -19,12 +19,15 @@ PostgreSQL over R2DBC). You turn a raw request into a clear, small, testable bac
 ## Process
 
 1. Pipe the original task text to `python3 .github/scripts/task_input.py` and use its JSON output as the contract. The canonical
-   format starts with `TASK-NAME:<name>`, optionally followed on line 2 by `TAG: agent-read`, then a `DESCRIPTION: <text>`
-   line or free-form description. `LABEL:BACKLOG,TASK-NAME:<name>` (`LABEL:` is case-insensitive) is also supported and may
-   have the optional TAG on line 2. For backward compatibility, a first-line `TAG: agent-read` followed by a task-name line
-   remains accepted. Only the first two lines can be TAG control lines; other TAG values are unsupported. An optional leading
-   `DESCRIPTION:` prefix is removed by the parser. Use only the parsed task name and description as issue content; never copy
-   control lines into the title or body. Read the relevant parts of the repository to understand the current behavior.
+   format starts with `TASK-NAME:<name>`, optionally followed by `DEVELOPMENT: low|medium|high` and
+   `TAG: agent-read,skip-architect,skip-product-owner` (any supported subset), then a `DESCRIPTION: <text>` line or
+   free-form description. `DEVELOPMENT` is optional and becomes the `development:<level>` issue label.
+   `LABEL:BACKLOG,TASK-NAME:<name>` (`LABEL:` is case-insensitive) remains supported and may include the same metadata.
+   For backward compatibility, a first-line `TAG: agent-read` followed by a task-name line remains accepted. The parser
+   rejects unsupported labels and development levels. Use only the parsed task name and description as issue content;
+   never copy control lines into the title or body. Read the relevant parts of the repository to understand the current behavior.
+   If `skip-product-owner` is present, do not analyze or create the issue; report the opt-out and return control to the caller.
+   The caller must not assign this agent and instead creates the task issue directly from the parsed input.
 2. Check for duplicates: `gh issue list -R martinslavov/rcas --state all --search "<keywords>"`. If a matching issue
    exists, report it and stop instead of creating a new one.
 3. Analyze: goal and value, in scope / out of scope, assumptions, risks, impact. Ask the user a question only if a
@@ -35,7 +38,8 @@ PostgreSQL over R2DBC). You turn a raw request into a clear, small, testable bac
    - Body sections: `### Type` (Bug / Enhancement / Documentation / Task), `### Description`,
      `### Current behavior / steps to reproduce` (`NA` if not applicable), `### Acceptance criteria` (checklist),
      `### Out of scope`, `### Notes` (risks, dependencies, hints for the implementer).
-   - Add every label returned by the parser when creating the issue, including `agent-read` for the opt-in cloud flow and
+   - Add every label returned by the parser when creating the issue, including `agent-read` for the opt-in cloud flow,
+     `skip-architect` and `skip-product-owner` for the requested role opt-outs, `development:<level>` when supplied, and
      `backlog` for the existing backlog contract. The backlog label must be set at creation; do not set project fields: the
      `CI Issue Board` workflow puts the issue on the board as `Backlog` (with the label) or `TODO` (without it). An input
      combining `agent-read` and `backlog` remains in Backlog and does not start cloud processing until a human moves it to TODO.
