@@ -21,6 +21,7 @@ REPOSITORY = "martinslavov/rcas"
 ENTRY_LABEL = "agent-read"
 BACKLOG_LABEL = "backlog"
 APPROVAL_LABEL = "architecture-approval-required"
+SKIP_ARCHITECT_LABEL = "skip-architect"
 HUMAN_REVIEW_LABEL = "needs-human-review"
 SHIP_PR_MARKER = "<!-- ship-pr -->"
 AUTHORIZATION_MARKER = re.compile(r"<!-- cloud-agent-pr-authorized:(\{.*?\}) -->")
@@ -133,6 +134,8 @@ def _issue_is_ready(api: GitHubApi, issue: dict[str, Any], comments: list[dict[s
     )
     if not engineer_dispatch:
         return False
+    if SKIP_ARCHITECT_LABEL in issue_labels:
+        return True
     design_notes = [
         comment
         for comment in comments

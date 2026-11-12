@@ -1,17 +1,26 @@
 # Task workflow rules
 
-These rules apply when task input starts with `TASK-NAME:<task-name>` (for example `TASK-NAME:code-review-agent` or `TASK-NAME:Code review agent`), optionally followed by `TAG: agent-read` on line 2. A `DESCRIPTION: <text>` prefix on the description is optional. The legacy order with `TAG: agent-read` on line 1 remains accepted, as does `LABEL:BACKLOG,TASK-NAME:<task-name>` with an optional TAG on line 2. Tasks without a task-name control line are handled normally, without creating an issue or branch unless needed. PR creation and task-issue intake are handled through `/ship-pr` for local work; the guarded cloud PR workflow handles only eligible `agent-read` issues.
+These rules apply when task input starts with `TASK-NAME:<task-name>` (for example `TASK-NAME:code-review-agent` or `TASK-NAME:Code review agent`), optionally followed by `DEVELOPMENT: low|medium|high` and `TAG: <label[,label...]>`. Supported tags are `agent-read`, `skip-architect`, and `skip-product-owner`. A `DESCRIPTION: <text>` prefix on the description is optional. The legacy order with `TAG: agent-read` on line 1 remains accepted, as does `LABEL:BACKLOG,TASK-NAME:<task-name>` with optional metadata after the task name. Tasks without a task-name control line are handled normally, without creating an issue or branch unless needed. PR creation and task-issue intake are handled through `/ship-pr` for local work; the guarded cloud PR workflow handles only eligible `agent-read` issues.
 
 ## Task input and queue (Backlog / TODO)
 
 The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Defining`, `TODO`, `In Progress` and `Done`.
 `.github/scripts/task_queue.sh list` prints open `TODO` issues oldest first. `task_queue.sh move` is an internal board projection only; agents must not use it to change task stages.
 
-- Canonical input starts with `TASK-NAME:<name>`, optionally followed by `TAG: agent-read` on line 2, and then the description.
-  An optional leading `DESCRIPTION:` prefix is stripped. The Product Owner consumes TAG (never includes it in issue title/body)
-  and creates the issue with `agent-read` plus any needed labels. For compatibility, the old first-line TAG order remains accepted.
-  Once Architect/approval/Engineer completes, a trusted, SHA-pinned poll workflow creates/reuses the branch PR and performs
-  guarded PR Review intake.
+- Canonical input starts with `TASK-NAME:<name>`, optionally followed by `DEVELOPMENT: low|medium|high`, then
+  `TAG: agent-read,skip-architect,skip-product-owner` (any supported subset), and then the description. Metadata lines may
+  appear in either order. The optional `DEVELOPMENT` value is recorded as a `development:<level>` issue label. An optional
+  leading `DESCRIPTION:` prefix is stripped. Never include control lines in the issue title/body. For compatibility, the
+  old first-line `TAG: agent-read` order remains accepted.
+- `skip-product-owner` means do not invoke `product-owner-agent`; the main agent parses the input and creates a concise task
+  issue directly, preserving the supplied description and labeling it with all parsed metadata. Without this tag, follow
+  the normal Product Owner intake.
+- `skip-architect` means do not invoke `architect-agent`; the Engineer starts directly from `TODO` and may proceed without
+  design comments or architecture approval, even when `architecture-approval-required` is present. This is an explicit
+  user opt-out. With `agent-read`, cloud dispatch starts the Engineer directly; the guarded branch/actor/PR checks and all
+  post-implementation review, QA, CI and merge gates remain in force.
+- When both skip tags are present, create the issue directly and start the Engineer. Other labels and issue controls,
+  including `backlog`, continue to apply. A `backlog` task remains parked until a human moves it to TODO.
 - `TASK-NAME:<name>` (default, no TAG): the Product Owner creates the issue without the `backlog` label, so the `CI Issue Board`
   workflow puts it in `TODO`, and the existing local flow runs immediately.
 - `LABEL:BACKLOG,TASK-NAME:<name>` (the `LABEL:` prefix is case-insensitive; the description follows as usual): the Product
@@ -27,9 +36,10 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
   Product Owner step is already done: the Architect starts it with `todo → architecture` using its own agent id. Merging
   projects the item to `Done`. For queued issues, elapsed time starts when picked up from `TODO`.
 - For an issue that is ready for autonomous work, add the `agent-read` label. The Copilot cloud-agent workflow starts
-  `architect-agent` first; it starts the Engineer only after an auditable skip/design note says approval is not required,
-  or after the repository owner posts `<!-- architecture-approved -->` for an issue labelled
-  `architecture-approval-required`. For `TAG: agent-read` tasks, the Engineer pushes the issue-numbered feature branch;
+  `architect-agent` first, unless `skip-architect` explicitly opts out; otherwise it starts the Engineer only after an
+  auditable skip/design note says approval is not required, or after the repository owner posts
+  `<!-- architecture-approved -->` for an issue labelled `architecture-approval-required`. For `TAG: agent-read` tasks,
+  the Engineer pushes the issue-numbered feature branch;
   `ci-agent-pr-creation.yml` creates/reuses the marked PR and performs guarded PR Review intake. For local/manual tasks, the
   main agent runs `/ship-pr agent-read` after the Engineer handoff. Both paths put `agent-read` on the PR (not the issue),
   then proceed through PR Review → QA. A failed stage returns to the
@@ -66,23 +76,26 @@ Six custom agents (in `.github/agents/`) do the work:
   concrete behaviour-verifying evidence, posts the AC → evidence table and sets the `Definition of Done` commit status; never
   changes code.
 
-When a task has the `TASK-NAME:` line, run them one after the other (the main agent only coordinates). The sequence is
-Product Owner → Architect (design note or skip) → user approval when required → Engineer → `/ship-pr` → PR Review → QA → merge →
-elapsed time recorded on the issue and PR:
+When a task has the `TASK-NAME:` line, run the applicable stages in order (the main agent coordinates):
+Product Owner (unless `skip-product-owner`) → Architect (unless `skip-architect`) → user approval when required →
+Engineer → `/ship-pr` → PR Review → QA → merge → elapsed time recorded on the issue and PR:
 
-1. Delegate the whole input to `product-owner-agent`. It returns the issue number, URL and the branch name.
-2. Delegate the issue to `architect-agent`. It posts exactly one design note comment containing
+1. Unless `skip-product-owner` is present, delegate the whole input to `product-owner-agent`. It returns the issue number,
+   URL and the branch name. With `skip-product-owner`, parse the input with `.github/scripts/task_input.py` and create the
+   issue directly using the parsed task name, description and labels; do not invoke Product Owner.
+2. Unless `skip-architect` is present, delegate the issue to `architect-agent`. It posts exactly one design note comment containing
    `<!-- architect-design-note -->` with affected components, interfaces/contracts, data/migrations, risks/mitigations,
    test plan and `Approval required: yes/no`, or an auditable skip comment containing `<!-- architect-skipped -->` and
    `skipped: <reason>`.
-3. If the issue has `architecture-approval-required`, show the design note to the user and stop before the Engineer starts.
+3. If the issue has `architecture-approval-required` and does not have `skip-architect`, show the design note to the user and stop before the Engineer starts.
    Do not proceed on silence or inferred consent. Continue only after the user explicitly approves and the issue has an
    `<!-- architecture-approved -->` comment that records who approved and when. Approval is required for architecture
    changes (new module/layer/component or cache topology), database schema/migrations, messaging/Kafka, public HTTP API
    (endpoints, payloads or status codes), or security (authentication, authorization, secrets, cryptography or
    security-relevant dependencies).
-4. Delegate the issue (number, branch name, Architect comment and original input) to `senior-java-software-engineer` only
-   after the approval gate is satisfied or Architect has documented a skip. It implements the task, commits and pushes the
+4. Delegate the issue (number, branch name, Architect comment if applicable, and original input) to
+   `senior-java-software-engineer` after the approval gate is satisfied, Architect has documented a skip, or
+   `skip-architect` is present. It implements the task, commits and pushes the
    branch, then hands it back to the main agent. It must not create a PR. The main agent fetches and checks out that exact
    branch. For `TAG: agent-read` issues, the isolated trusted workflow creates/reuses the template PR and runs guarded PR
    Review intake. For local work, the main agent runs `/ship-pr` to create the PR and link the task issue; for a manual
@@ -124,7 +137,7 @@ The steps below are what the agents follow:
    association used by the cloud PR-creation guard. For local work retain `feature/<task-name>`. If the value after
    `TASK-NAME:` is already a slug (lowercase, words separated by `-`), use it as is. Otherwise derive a short meaningful slug
    in lowercase ASCII letters, digits and `-` only. Only `feature/*` and `hotfix/*` branches can be created.
-3. **Work.** Before creating a branch or implementing, the engineer reads the Architect design note or confirms the skip comment. If `architecture-approval-required` is present, the engineer must find the explicit `<!-- architecture-approved -->` user comment first; otherwise stop without creating a branch or changing files. Commit the changes with clear messages. Never push to `main` directly.
+3. **Work.** Before creating a branch or implementing, the engineer reads the Architect design note or confirms the skip comment, unless `skip-architect` is present. If `architecture-approval-required` is present without `skip-architect`, the engineer must find the explicit `<!-- architecture-approved -->` user comment first; otherwise stop without creating a branch or changing files. Commit the changes with clear messages. Never push to `main` directly.
 4. **Pull request.** When implementation is complete, the Engineer pushes the branch and hands it to the main agent. The main
    agent runs `/ship-pr` to create the PR against `main` using `.github/PULL_REQUEST_TEMPLATE/pull_request_template.md`;
    `/ship-pr` delegates to `product-owner-agent` to create a Product Owner-style task issue first if no task issue exists.
@@ -204,7 +217,7 @@ New or changed workflows must use `permissions: {}` at the top level with minima
 ### QA test scope and status
 
 - A PR is docs-only only if every changed file matches `*.md`, `.github/agents/**`, `.github/copilot-instructions.md`, `.github/PULL_REQUEST_TEMPLATE/pull_request_template.md`, or `.github/ISSUE_TEMPLATE/**`. QA reviews the documentation and its consistency; tests are not required. Any other changed file means the PR is not docs-only.
-- Architect may skip a design note for docs-only changes under that exact definition, or for a small, narrowly scoped change touching no public API, database schema/migrations, messaging, security, configuration, dependencies, architecture or cache topology. Every skip is auditable: post an issue comment with `<!-- architect-skipped -->` and `skipped: <reason>`. Otherwise, post the design note. Approval triggers still apply whenever present.
+- Architect may skip a design note for docs-only changes under that exact definition, or for a small, narrowly scoped change touching no public API, database schema/migrations, messaging, security, configuration, dependencies, architecture or cache topology. Every Architect skip is auditable: post an issue comment with `<!-- architect-skipped -->` and `skipped: <reason>`. Otherwise, post the design note. Approval triggers still apply whenever present, except when the user explicitly supplied the `skip-architect` label.
 - For any change under `src/**`, `component-tests/**`, `.github/checkstyle/**`, or `.github/scripts/**`, or to `build.gradle`, `settings.gradle`, `gradle/**`, `Dockerfile`, `docker-compose.yml`, `docker/**`, `Makefile`, `.github/workflows/**`, or `db.migration/**`, QA runs the relevant tests, at minimum `./gradlew build` with JDK 25.
 - For runtime-affecting changes (application source or configuration, runtime dependencies or packaging, database migrations, or Docker/Compose runtime setup; including changes in `src/**`, `db.migration/**`, `Dockerfile`, `docker-compose.yml`, and `docker/**`), QA additionally runs `make build && make up && make component-tests && make sanity-tests && make down`.
 - When in doubt, QA runs the tests.

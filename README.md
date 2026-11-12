@@ -291,23 +291,26 @@ Custom agents live in `.github/agents/`:
 
 Reusable procedures such as `/ship-pr` (commit → push → PR → PR Review → QA → merge; DoD is manual only and not run by the skill) live in `.github/skills/`; see [Skills](.github/docs/skills.md).
 
-Give a task with `TASK-NAME:<name>` on the first line. To opt into the cloud flow, add `TAG: agent-read` as the optional
-second line; then provide `DESCRIPTION: <description>` or free-form description text. The Product Owner consumes the TAG
-control line, creates the issue with `agent-read`, and keeps control metadata out of the issue title/body. Copilot runs
-Architect first, waits for required human approval when applicable, then dispatches Engineer. The trusted cloud PR workflow
-creates/reuses an eligible `feature/<issue>-<task-slug>` PR and hands off to PR Review → QA → automatic merge. The five-minute
-poll recovers a missed PR/intake. For backward compatibility, a first-line TAG followed by the task-name line is still
-accepted. `LABEL:BACKLOG,TASK-NAME:<name>` also remains supported, with optional TAG on the next line. See
-[Agent automation](.github/docs/agent-automation.md).
+Give a task with `TASK-NAME:<name>` on the first line. Optional metadata lines are `DEVELOPMENT: low|medium|high` and
+`TAG: agent-read,skip-architect,skip-product-owner` (any supported subset), followed by `DESCRIPTION: <description>` or
+free-form description text. `DEVELOPMENT` becomes a `development:<level>` issue label. The Product Owner consumes the
+metadata, creates the issue with the selected labels and keeps control lines out of the issue title/body. `skip-product-owner`
+instead has the main agent create the task issue directly; `skip-architect` starts Engineer directly and explicitly bypasses
+architecture comments and approval, including `architecture-approval-required`. With `agent-read`, the trusted cloud workflow
+dispatches Architect unless `skip-architect` is set, then creates/reuses an eligible `feature/<issue>-<task-slug>` PR and
+hands off to PR Review → QA → automatic merge. The five-minute poll recovers a missed PR/intake. For backward compatibility,
+a first-line TAG followed by the task-name line is still accepted. `LABEL:BACKLOG,TASK-NAME:<name>` also remains supported,
+with optional metadata after the task name. See [Agent automation](.github/docs/agent-automation.md).
 
-The interactive workflow is Product Owner → Architect (design note or auditable skip) →
-explicit user approval when required → Engineer → (cloud PR workflow for TAG tasks or `/ship-pr` locally) → PR Review → QA → merge → elapsed time recorded on the issue and PR
+The interactive workflow is Product Owner (unless `skip-product-owner`) → Architect (unless `skip-architect`) →
+explicit user approval when required → Engineer → (cloud PR workflow for `agent-read` tasks or `/ship-pr` locally) → PR Review → QA → merge → elapsed time recorded on the issue and PR
 (`.github/scripts/post_task_elapsed.sh`). For architecture changes (new module/layer/component or cache
 topology), database schema/migrations, messaging/Kafka, public HTTP API or security changes, the Architect applies
 `architecture-approval-required`; the orchestrator must wait for the user's explicit approval recorded on the issue as
-`<!-- architecture-approved -->` before the Engineer creates a branch or starts implementation. The Engineer reads the design note
-before implementation. Architect skips only docs-only changes (per the QA definition below) or small changes that touch none of the
-listed risk areas, configuration, dependencies, architecture or cache topology; every skip has an issue comment with
+`<!-- architecture-approved -->` before the Engineer creates a branch or starts implementation, unless the user explicitly
+selected `skip-architect`. The Engineer reads the design note before implementation unless that opt-out is present. Architect
+skips only docs-only changes (per the QA definition below) or small changes that touch none of the listed risk areas,
+configuration, dependencies, architecture or cache topology; every Architect skip has an issue comment with
 `<!-- architect-skipped -->` and `skipped: <reason>`.
 
 ### Workflow orchestrator
@@ -353,9 +356,11 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 
 | Input | Result |
 |-------|--------|
-| `TASK-NAME:<name>` then optional `TAG: agent-read` | Issue created in `TODO` with `agent-read`; Architect/approval/Engineer and the trusted cloud PR workflow continue automatically |
+| `TASK-NAME:<name>` then optional `DEVELOPMENT`/`TAG` metadata | Issue created in `TODO`; each TAG becomes an issue label, and `DEVELOPMENT` becomes `development:<level>` |
+| `TASK-NAME:<name>` plus `TAG: agent-read` | Starts cloud automation: Architect then Engineer, unless `skip-architect` opts out; PR Review, QA and merge gates remain |
+| `TAG: skip-product-owner,skip-architect` | Main agent creates the issue directly and starts Engineer without Product Owner, Architect or architecture approval |
 | `TASK-NAME:<name>` without TAG | Issue created in `TODO` (default) and the existing local flow runs |
-| `LABEL:BACKLOG,TASK-NAME:<name>` then optional `TAG: agent-read` | Issue created in `Backlog`; the `backlog` label is set, and `agent-read` is also set when TAG is present |
+| `LABEL:BACKLOG,TASK-NAME:<name>` then optional metadata | Issue created in `Backlog`; `backlog` and any parsed metadata labels are set |
 | Legacy `TAG: agent-read` then a task-name line | Accepted for backward compatibility; labels and flow match the corresponding task-name input |
 
 To start a backlog task without a state record, first seed it with `orchestrator.py init <issue> --state backlog --agent human`,

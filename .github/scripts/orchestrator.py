@@ -16,6 +16,7 @@ from typing import Callable, Mapping
 OWNER = "martinslavov"
 REPO = "martinslavov/rcas"
 ENTRY_LABEL = "agent-read"
+SKIP_ARCHITECT_LABEL = "skip-architect"
 HUMAN_REVIEW_LABEL = "needs-human-review"
 SHIP_PR_MARKER = "<!-- ship-pr -->"
 PR_REVIEW_INTAKE_ACTION = "ship_pr_intake"
@@ -153,7 +154,9 @@ def validate_record(record: Mapping) -> None:
             raise OrchestratorError(f"attempts.{loop}.count must be a non-negative integer")
 
 
-def validate_transition(record: Mapping, target: str, agent: str) -> None:
+def validate_transition(
+    record: Mapping, target: str, agent: str, skip_architect: bool = False,
+) -> None:
     """Validate a state change without performing I/O."""
     validate_record(record)
     if not isinstance(target, str) or target not in STATE_TABLE:
@@ -163,6 +166,9 @@ def validate_transition(record: Mapping, target: str, agent: str) -> None:
 
     source = record["state"]
     owner, ordinary_targets = STATE_TABLE[source]
+    bypass_architecture = (
+        source == "todo" and target == "implementation" and skip_architect
+    )
     if source in {"blocked", "human-review"}:
         resume_state = record["resume_state"]
         if agent != "human":
@@ -172,6 +178,8 @@ def validate_transition(record: Mapping, target: str, agent: str) -> None:
         return
 
     allowed = set(ordinary_targets)
+    if bypass_architecture:
+        allowed.add("implementation")
     if source in ACTIVE_STATES:
         allowed.update({"blocked", "human-review"})
     if target not in allowed:
@@ -179,6 +187,8 @@ def validate_transition(record: Mapping, target: str, agent: str) -> None:
 
     # Human intervention can suspend any active stage; ordinary progression is owned by that stage.
     authorized = {owner}
+    if bypass_architecture:
+        authorized.add("senior-java-software-engineer")
     if target in {"blocked", "human-review"} and source in ACTIVE_STATES:
         authorized.add("human")
     if agent not in authorized:
@@ -192,8 +202,9 @@ def transition_record(
     agent: str,
     head_sha: str | None = None,
     now: str | None = None,
+    skip_architect: bool = False,
 ) -> dict:
-    validate_transition(record, target, agent)
+    validate_transition(record, target, agent, skip_architect)
     updated = deepcopy(dict(record))
     previous_state = updated["state"]
     updated["state"] = target
@@ -380,12 +391,20 @@ class Orchestrator:
 
     def prepare_transition(
         self, record: Mapping, target: str, agent: str, head_sha: str | None = None,
+        skip_architect: bool = False,
     ) -> dict:
-        return transition_record(record, target, agent, head_sha)
+        return transition_record(record, target, agent, head_sha, skip_architect=skip_architect)
 
     def transition(self, issue: int, target: str, agent: str, head_sha: str | None, dry_run: bool) -> dict:
         record, comment_id = self.get_record(issue)
-        updated = self.prepare_transition(record, target, agent, head_sha)
+        skip_architect = False
+        if record["state"] == "todo" and target == "implementation":
+            labels = self.call(
+                "gh", "api", "--paginate", "--jq", ".[].name",
+                f"repos/{REPO}/issues/{issue}/labels",
+            )
+            skip_architect = SKIP_ARCHITECT_LABEL in labels.splitlines()
+        updated = self.prepare_transition(record, target, agent, head_sha, skip_architect)
         if record["state"] == "architecture" and target == "implementation":
             labels = self.call("gh", "api", "--paginate", "--jq", ".[].name", f"repos/{REPO}/issues/{issue}/labels")
             if "architecture-approval-required" in labels.splitlines():

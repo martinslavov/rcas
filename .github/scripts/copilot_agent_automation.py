@@ -23,6 +23,7 @@ ENTRY_LABEL = "agent-read"
 BACKLOG_LABEL = "backlog"
 HUMAN_REVIEW_LABEL = "needs-human-review"
 ARCHITECTURE_APPROVAL_LABEL = "architecture-approval-required"
+SKIP_ARCHITECT_LABEL = "skip-architect"
 SHIP_PR_MARKER = "<!-- ship-pr -->"
 CI_FIX_ATTEMPT_LIMIT = 3
 REQUIRED_CHECKS = (
@@ -227,11 +228,16 @@ def _ready_issue_dispatch(api: GitHub, issue: dict[str, Any]) -> Dispatch | None
     number = issue["number"]
     comments = api.pages(f"/repos/{api.repository}/issues/{number}/comments")
     architect_dispatch = Dispatch("issue", number, "architect-agent")
-    if not any(architect_dispatch.marker in (comment.get("body") or "") for comment in comments):
+    skip_architect = SKIP_ARCHITECT_LABEL in issue_labels
+    if not skip_architect and not any(
+        architect_dispatch.marker in (comment.get("body") or "") for comment in comments
+    ):
         return architect_dispatch
     implementation_dispatch = Dispatch("issue", number, "senior-java-software-engineer")
     if any(implementation_dispatch.marker in (comment.get("body") or "") for comment in comments):
         return None
+    if skip_architect:
+        return implementation_dispatch
 
     trusted_agent_authors = {api.owner, "copilot-swe-agent", "copilot-swe-agent[bot]"}
     design_notes = [
@@ -566,7 +572,8 @@ def get_dispatches(event_name: str, event: dict[str, Any], api: GitHub) -> list[
         label = (event.get("label") or {}).get("name")
         if event.get("action") == "labeled" and label == ENTRY_LABEL and issue.get("state") == "open":
             if not _is_pr(issue) and BACKLOG_LABEL not in _labels(issue) and HUMAN_REVIEW_LABEL not in _labels(issue):
-                return [Dispatch("issue", issue["number"], "architect-agent")]
+                dispatch = _ready_issue_dispatch(api, issue)
+                return [dispatch] if dispatch else []
         if event.get("action") == "unlabeled" and label == HUMAN_REVIEW_LABEL and _is_pr(issue):
             number = issue["number"]
             pr = api.request("GET", f"/repos/{api.repository}/pulls/{number}")
@@ -680,7 +687,9 @@ def assign_to_copilot(api: GitHub, dispatch: Dispatch) -> None:
     custom_instructions = (
         f"Follow the custom agent profile `.github/agents/{profile}` and the task workflow in "
         "`.github/copilot-instructions.md`. This is a staged `agent-read` task. Preserve the "
-        "architecture-approval, required-status, bounded-retry, and human-review gates."
+        "required-status, bounded-retry, and human-review gates. If the issue has the explicit "
+        "`skip-architect` label, follow its documented architecture opt-out instead of requiring "
+        "Architect comments or approval."
     )
     mutation = """
       mutation($assignable: ID!, $actor: ID!, $repository: ID!, $baseRef: String!,
@@ -715,7 +724,7 @@ def assign_to_copilot(api: GitHub, dispatch: Dispatch) -> None:
     )
     if not result.get("addAssigneesToAssignable", {}).get("assignable"):
         raise AutomationError(f"GitHub did not assign {dispatch.stage} to #{dispatch.number}")
-    if dispatch.resource == "issue" and dispatch.stage == "architect-agent":
+    if dispatch.resource == "issue":
         _record_start_time(api, dispatch.number)
     _add_dispatch_marker(api, dispatch)
     print(f"Dispatched {dispatch.stage} to Copilot for #{dispatch.number}")

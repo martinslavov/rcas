@@ -22,18 +22,22 @@ PRs only by running the `/ship-pr` skill.
 ## Process
 
 1. Read the issue (`gh issue view <n> -R martinslavov/rcas`), all its comments, acceptance criteria and relevant code.
-   Read the Architect's comment containing `<!-- architect-design-note -->`, or confirm the auditable skip comment
-   containing `<!-- architect-skipped -->` and `skipped: <reason>`. Ask the user only if a requirement is unclear and
-   cannot be inferred.
+   Unless the issue has `skip-architect`, read the Architect's comment containing `<!-- architect-design-note -->`, or
+   confirm the auditable skip comment containing `<!-- architect-skipped -->` and `skipped: <reason>`. With
+   `skip-architect`, the user has explicitly opted out of the Architect review and its approval gate, including when
+   `architecture-approval-required` is also present. Ask the user only if a requirement is unclear and cannot be inferred.
 2. Before creating a branch or implementing, check whether the issue has the label `architecture-approval-required`.
-   If it does, proceed only if the issue comments also contain `<!-- architecture-approved -->` recording the user's
-   explicit approval, who approved and when. Otherwise stop and return the design note for approval; do not create a branch
-   or make implementation changes. For an `agent-read` cloud issue, use `feature/<issue-number>-<task-name-slug>` so the
-   trusted PR-creation workflow can verify the branch-to-issue association; local branches retain `feature/<task-name>`.
+   If it does and `skip-architect` is absent, proceed only if the issue comments also contain
+   `<!-- architecture-approved -->` recording the user's explicit approval, who approved and when. Otherwise stop and
+   return the design note for approval; do not create a branch or make implementation changes. For an `agent-read` cloud
+   issue, use `feature/<issue-number>-<task-name-slug>` so the trusted PR-creation workflow can verify the branch-to-issue
+   association; local branches retain `feature/<task-name>`.
 3. Create the branch from an up to date `main`: cloud `agent-read` issues use the exact `feature/<issue-number>-<task-name-slug>`
    branch; local tasks use `feature/<task-name>`. Only `feature/*` and `hotfix/*` branches can be created. Never work on or
    push to `main`.
-   State transitions: the `/ship-pr` intake records `implementation → pr-review` after the PR exists; use `merge → done`
+   For a `skip-architect` issue initially in `todo`, transition directly to `implementation` with this agent id before
+   implementing. The orchestrator permits this edge only when the issue carries `skip-architect`. State transitions:
+   the `/ship-pr` intake records `implementation → pr-review` after the PR exists; use `merge → done`
    only after verifying the merge, with this agent id.
 4. Implement the smallest change that satisfies every acceptance criterion; follow the existing package structure
    `com.gbp.rcas` and conventions. Do not make unrelated changes.

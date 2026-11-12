@@ -123,10 +123,27 @@ class CopilotDispatchTest(unittest.TestCase):
         event = {
             "action": "labeled",
             "label": {"name": ENTRY_LABEL},
-            "issue": {"number": 42, "state": "open", "labels": []},
+            "issue": {"number": 42, "state": "open", "labels": [{"name": ENTRY_LABEL}]},
         }
         self.assertEqual(
             [Dispatch("issue", 42, "architect-agent")],
+            get_dispatches("issues", event, FakeGitHub()),
+        )
+
+    def test_skip_architect_dispatches_engineer_without_architecture_comments(self):
+        labels = [
+            {"name": ENTRY_LABEL},
+            {"name": "skip-architect"},
+            {"name": "architecture-approval-required"},
+        ]
+        event = {
+            "action": "labeled",
+            "label": {"name": ENTRY_LABEL},
+            "issue": {"number": 42, "state": "open", "labels": labels},
+        }
+
+        self.assertEqual(
+            [Dispatch("issue", 42, "senior-java-software-engineer")],
             get_dispatches("issues", event, FakeGitHub()),
         )
 
@@ -564,6 +581,7 @@ class AssignToCopilotQueryTest(unittest.TestCase):
         lookup = api.queries[0]
         self.assertIn("issue(number", lookup)
         self.assertNotIn("pullRequest(number", lookup)
+        self.assertTrue(any("agent-automation-start:" in body["body"] for _, body in api.comments))
 
 
 if __name__ == "__main__":

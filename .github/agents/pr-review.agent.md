@@ -27,10 +27,12 @@ through the `PR Review` commit status. You never edit, commit or push code, and 
    The command counts distinct round markers across issue comments and review bodies; the round number is that count plus one, per PR. Retain all markers if a human later resumes the loop.
 3. Review the complete change against the linked issue and checklist below. Report only actionable findings, each with severity,
    exact file and line where known, concise rationale, and a suggested fix. Use `blocker`, `major`, `minor`, or `nit`.
-   For an issue labelled `architecture-approval-required`, independently read the issue's `<!-- architect-design-note -->`
-   and `<!-- architecture-approved -->` comments and verify the implementation follows the approved design. Any material
-   deviation from the approved design is at least `major`. Require evidence of backward compatibility and, for schema
-   changes, migration and rollback considerations; missing evidence is at least `major`.
+   For an issue labelled `architecture-approval-required` without `skip-architect`, independently read the issue's
+   `<!-- architect-design-note -->` and `<!-- architecture-approved -->` comments and verify the implementation follows
+   the approved design. Any material deviation from the approved design is at least `major`. Require evidence of backward
+   compatibility and, for schema changes, migration and rollback considerations; missing evidence is at least `major`.
+   When `skip-architect` is present, do not require those architecture comments or approval; review the implementation
+   normally against the task and code-review checklist.
 4. Post the round's report as one issue comment (`gh pr comment <pr> -R martinslavov/rcas --body "..."`); it is the canonical source
    for round counting. The report must include the hidden marker `<!-- pr-review-round:N -->` for this round. Optionally also post a
    review with inline comments; a repeated marker for the same N is deduplicated by the count. Include a summary table with columns
