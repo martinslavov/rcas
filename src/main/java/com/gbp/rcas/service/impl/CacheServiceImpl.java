@@ -25,6 +25,10 @@ import com.gbp.rcas.service.CacheService;
 public class CacheServiceImpl implements CacheService {
 
     private static final Logger logger = LoggerFactory.getLogger(CacheServiceImpl.class);
+    // Separate logger so cache writes can be enabled on demand: logging.level.com.gbp.rcas.cache.write=DEBUG
+    private static final Logger WRITE_LOGGER = LoggerFactory.getLogger("com.gbp.rcas.cache.write");
+    private static final String CAFFEINE = "Caffeine";
+    private static final String REDIS = "Redis";
 
     private final CacheManager cacheManager;
     private final ReactiveHashOperations<String, Long, String> hashOperations;
@@ -47,16 +51,21 @@ public class CacheServiceImpl implements CacheService {
     @Override
     public <T> Mono<T> getCache(Long id, String cacheName, Supplier<Mono<T>> retriever, Class<T> cls) {
         Cache cache = cacheManager.getCache(cacheName);
-        return Mono.defer(() -> Mono.justOrEmpty(cache.get(id, cls))
-                        .flatMap(value -> refreshRedisExpiration(redisKey(cacheName, id)).thenReturn(value)))
-                .switchIfEmpty(Mono.defer(() -> readFromRedis(id, cacheName, cls)))
+        return Mono.defer(() -> {
+                    T cached = cache.get(id, cls);
+                    logLookup(CAFFEINE, cacheName, id, cached != null);
+                    return Mono.justOrEmpty(cached)
+                            .flatMap(value -> refreshRedisExpiration(redisKey(cacheName, id)).thenReturn(value));
+                })
+                .switchIfEmpty(Mono.defer(() -> readFromRedis(id, cacheName, cls)
+                        .doOnNext(value -> putInCaffeine(cache, cacheName, id, value))))
                 .switchIfEmpty(Mono.defer(() -> {
-                    logger.info("{} was not found in cache by id: {}", cls.getName(), id);
+                    logger.info("{} was not found in any cache (Caffeine, Redis) by id: {}", cls.getName(), id);
                     return retriever.get()
                             .flatMap(value -> writeToRedis(id, cacheName, value)
-                                    .thenReturn(value));
-                }))
-                .doOnNext(value -> cache.put(id, value));
+                                    .thenReturn(value))
+                            .doOnNext(value -> putInCaffeine(cache, cacheName, id, value));
+                }));
     }
 
     @Override
@@ -64,6 +73,8 @@ public class CacheServiceImpl implements CacheService {
         Cache cache = cacheManager.getCache(cacheName);
         return Mono.defer(() -> {
                     Object cachedValue = cache.get(id, Object.class);
+                    boolean hit = cachedValue instanceof List<?>;
+                    logLookup(CAFFEINE, cacheName, id, hit);
                     if (cachedValue instanceof List<?> values) {
                         return Mono.just(values.stream().map(cls::cast).toList())
                                 .flatMap(cachedValues -> refreshRedisExpiration(redisKey(cacheName, id))
@@ -72,15 +83,24 @@ public class CacheServiceImpl implements CacheService {
                     return Mono.empty();
                 })
                 .switchIfEmpty(Mono.defer(() -> readListFromRedis(id, cacheName, cls)
-                        .doOnNext(values -> cache.put(id, values))))
+                        .doOnNext(values -> putInCaffeine(cache, cacheName, id, values))))
                 .switchIfEmpty(Mono.defer(() -> {
-                    logger.info("{} was not found in cache by id: {}", cacheName, id);
+                    logger.info("{} was not found in any cache (Caffeine, Redis) by id: {}", cacheName, id);
                     return Flux.defer(retriever).collectList()
                             .flatMap(values -> writeToRedis(id, cacheName, values)
-                                    .thenReturn(values));
+                                    .thenReturn(values))
+                            .doOnNext(values -> putInCaffeine(cache, cacheName, id, values));
                 }))
-                .doOnNext(values -> cache.put(id, values))
                 .flatMapMany(Flux::fromIterable);
+    }
+
+    private void logLookup(String layer, String cacheName, Long id, boolean hit) {
+        logger.info("{} cache {} for {}:{}", layer, hit ? "HIT" : "MISS", cacheName, id);
+    }
+
+    private void putInCaffeine(Cache cache, String cacheName, Long id, Object value) {
+        cache.put(id, value);
+        WRITE_LOGGER.debug("{} cache WRITE for {}:{}", CAFFEINE, cacheName, id);
     }
 
     private <T> Mono<T> readFromRedis(Long id, String cacheName, Class<T> cls) {
@@ -88,6 +108,8 @@ public class CacheServiceImpl implements CacheService {
         return hashOperations.get(redisKey, id)
                 .flatMap(json -> deserialize(json, cls))
                 .flatMap(value -> refreshRedisExpiration(redisKey).thenReturn(value))
+                .doOnNext(value -> logLookup(REDIS, cacheName, id, true))
+                .switchIfEmpty(Mono.fromRunnable(() -> logLookup(REDIS, cacheName, id, false)))
                 .onErrorResume(error -> {
                     logger.warn("Redis cache lookup failed for {}", redisKey, error);
                     return Mono.empty();
@@ -99,6 +121,8 @@ public class CacheServiceImpl implements CacheService {
         return hashOperations.get(redisKey, id)
                 .flatMap(json -> deserializeList(json, cls))
                 .flatMap(values -> refreshRedisExpiration(redisKey).thenReturn(values))
+                .doOnNext(values -> logLookup(REDIS, cacheName, id, true))
+                .switchIfEmpty(Mono.fromRunnable(() -> logLookup(REDIS, cacheName, id, false)))
                 .onErrorResume(error -> {
                     logger.warn("Redis cache lookup failed for {}", redisKey, error);
                     return Mono.empty();
@@ -110,6 +134,7 @@ public class CacheServiceImpl implements CacheService {
         return serialize(value)
                 .flatMap(json -> hashOperations.put(redisKey, id, json))
                 .then(refreshRedisExpiration(redisKey))
+                .doOnSuccess(ignored -> WRITE_LOGGER.debug("{} cache WRITE for {}", REDIS, redisKey))
                 .onErrorResume(error -> {
                     logger.warn("Redis cache write failed for {}", redisKey, error);
                     return Mono.empty();

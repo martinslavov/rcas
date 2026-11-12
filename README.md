@@ -12,6 +12,8 @@ A read goes through the caches first and only falls back to the database on a mi
 
 Cache entries in Caffeine and Redis expire after access. Configure the shared expiration with `cache.expiration.hours` (24 hours by default).
 
+Every cache lookup is logged at `INFO` as `HIT` or `MISS` per layer (Caffeine, then Redis). Cache writes are logged at `DEBUG` by the dedicated logger `com.gbp.rcas.cache.write`, so they are off by default; enable them with `logging.level.com.gbp.rcas.cache.write=DEBUG` (or the env var `LOGGING_LEVEL_COM_GBP_RCAS_CACHE_WRITE=DEBUG`).
+
 ## Tech stack
 
 - Java 25
