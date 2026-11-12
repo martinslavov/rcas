@@ -16,6 +16,7 @@ import org.springframework.cache.caffeine.CaffeineCacheManager;
 import org.springframework.data.redis.core.ReactiveHashOperations;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -45,6 +46,7 @@ class CacheServiceImplTest {
     private ReactiveRedisTemplate<String, String> redisTemplate;
     private ObjectMapper objectMapper;
     private CacheServiceImpl cacheService;
+    private SimpleMeterRegistry meterRegistry;
 
     @BeforeEach
     @SuppressWarnings("unchecked")
@@ -53,7 +55,9 @@ class CacheServiceImplTest {
         hashOperations = mock(ReactiveHashOperations.class);
         redisTemplate = mock(ReactiveRedisTemplate.class);
         objectMapper = JsonMapper.builder().build();
-        cacheService = new CacheServiceImpl(cacheManager, hashOperations, redisTemplate, objectMapper, 24);
+        meterRegistry = new SimpleMeterRegistry();
+        cacheService = new CacheServiceImpl(cacheManager, hashOperations, redisTemplate, objectMapper,
+                meterRegistry, 24);
     }
 
     @Test

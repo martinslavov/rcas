@@ -122,7 +122,7 @@ An optional monitoring stack is available in the `monitoring` Compose profile. I
 | `otel-collector` | `otel/opentelemetry-collector:0.116.1` | 4317 (gRPC), 4318 (HTTP) | receives OTLP; logs go to Loki, traces to the collector log (`debug` exporter) |
 | `prometheus` | `prom/prometheus:v3.0.1` | 9090 | scrapes `rcas:8080/app/actuator/prometheus` and the collector |
 | `loki` | `grafana/loki:3.3.2` | 3100 | log storage (OTLP ingestion on `/otlp`) |
-| `grafana` | `grafana/grafana:11.4.0` | 3000 | provisioned datasources Prometheus and Loki, anonymous admin access (local use only) |
+| `grafana` | `grafana/grafana:11.4.0` | 3000 | provisioned Prometheus and Loki datasources and the RCAS Cache & Database Load dashboard; anonymous admin access (local use only) |
 
 ```bash
 make monitoring-up      # RCAS + dependencies + monitoring, OTLP export enabled in RCAS
@@ -157,7 +157,45 @@ Alternatively, `make monitoring-down` removes the development stack and its volu
 
 `make monitoring-up` passes `docker/monitoring/monitoring.env`, which switches RCAS to `log4j2-otel.yaml` (console plus the OpenTelemetry log appender) and enables OTLP trace and log export to the collector (traces are sampled at 100%). Without that file the OTLP export is off, so tests and the default stack need no collector. Configuration lives in `docker/monitoring/`.
 
-Open Grafana at <http://localhost:3000> (Explore, datasource `Loki`, query `{service_name="rcas"}`; or `Prometheus`), Prometheus targets at <http://localhost:9090/targets>.
+Open the provisioned dashboard at <http://localhost:3000/d/rcas-cache-db-load/rcas-cache-database-load> (UID `rcas-cache-db-load`, default range 1 hour, refresh 15 seconds). Grafana Explore is also available with datasource `Loki`, query `{service_name="rcas"}`, or `Prometheus`; Prometheus targets are at <http://localhost:9090/targets>. Dashboard JSON and provisioning are versioned under `docker/monitoring/grafana/provisioning/`, so Grafana re-creates the dashboard when its container is replaced.
+
+### Cache and database metric semantics
+
+The cache metrics use bounded `cache` (`cacheUser` / `cacheSubscription`), `operation` (`item` / `list`), `layer`, `outcome`, `source` and TTL `trigger` labels. They never include record IDs, raw request URLs, SQL or exception messages. The `application=rcas` common tag, scrape `job`, and `instance` labels are available as dashboard filters. HTTP request metrics group by Spring's templated `uri` route, not the request's raw path or IDs.
+
+| Metric | What one observation represents |
+|--------|---------------------------------|
+| `rcas_cache_lookup_seconds_*` | One actual Caffeine lookup or Redis hash lookup plus deserialization. Outcomes are `hit`, `miss`, `error` or `cancelled`; a lookup error is never also a miss. Redis TTL work is excluded from lookup latency. |
+| `rcas_database_read_seconds_*` | One repository publisher execution. A `Mono` with no row and a list read with no rows are `empty`. A `list` operation collects the repository `Flux` once, so it is one repository read regardless of row count. The metric counts repository calls, not every SQL statement. |
+| `rcas_cache_logical_read_total` | One subscribed `CacheService` read. `source` is `caffeine`, `redis`, `database` or `none`; `outcome` is `success`, `empty`, `error` or `cancelled`. An empty cached/database list is an `empty` logical result with its actual cache/database source. A missing `Mono` result, error or cancellation is never counted as a successful served value. |
+| `rcas_cache_write_seconds_*` | One Caffeine `put` or Redis serialization/hash write. Redis write errors remain visible even though the established cache-fallback behavior swallows them. |
+| `rcas_cache_ttl_refresh_seconds_*` | One Redis `expire` operation, separately timed and tagged with trigger `caffeine_hit`, `redis_hit` or `write`. Even a Caffeine hit still refreshes Redis TTL; it does not perform a Redis lookup. Swallowed TTL errors remain visible. |
+| `rcas_cache_redis_fallback_total` | A Redis lookup error followed by an actually invoked database retriever, not merely a Redis miss. |
+
+These are different levels of work: one HTTP request can perform multiple logical cache reads, and each logical read can make zero or more cache-layer lookups plus at most one database repository read. The `/subscriptions/{ids}` HTTP route calls the item overload per ID, so those are separate `item` reads; a `list` read is one cached/repository list operation. The HTTP panel counts requests by templated endpoint route. Dashboard hit ratios use only hits and misses; errors and cancellations are separate. A missing series/“No data” means the target or metric is unavailable, not zero traffic or a 100% hit ratio.
+
+Timer histograms support average, p95 and p99. Caffeine's native `cache_size`, `cache_evictions_total` and cache hit/miss metrics are provided by Spring Boot's cache binder with Caffeine `recordStats`; the dashboard uses the custom lookup timers for layer ratios to avoid combining/double-counting native cache lookups.
+
+### Reproducible read load
+
+The dependency-free load driver uses `curl` against seeded, read-only user endpoints. From a cold local stack, reset and seed the development data, then run its defaults (100 requests per worker at concurrency 1 and 8, with a 0.5-second pause per request). Each phase lasts at least 50 seconds so multiple Prometheus scrapes capture each load level. **The reset command removes the local development database and Redis volumes; do not use it to reset a stack whose data you need to keep.**
+
+```bash
+make monitoring-down
+make monitoring-up
+make startup-service-records-populator
+CONCURRENCY_LEVELS='1 8' REQUESTS_PER_WORKER=100 USER_IDS=1000,1001,1002 ./scripts/load-cache-db.sh
+python3 scripts/check-monitoring-dashboard.py
+```
+
+The first request for each seeded ID on a fresh stack sees Caffeine/Redis misses and a database read; subsequent reads become warm. Run the same command again without restarting to inspect warm Caffeine behavior. To isolate Redis hits with an empty Caffeine tier, restart only the app (Redis and PostgreSQL stay running) and immediately run the script:
+
+```bash
+docker compose --profile app restart rcas
+CONCURRENCY_LEVELS='1 8' REQUESTS_PER_WORKER=100 USER_IDS=1000,1001,1002 ./scripts/load-cache-db.sh
+```
+
+The first worker at concurrency 1 reads Redis and promotes results to Caffeine; remaining requests exercise the warm tier. Prometheus scrapes every 15 seconds, so allow a scrape interval before inspecting the graphs. The helper accepts `BASE_URL`, `USER_IDS`, `CONCURRENCY_LEVELS`, `REQUESTS_PER_WORKER` and `REQUEST_DELAY` overrides; it does not write or seed application data.
 
 ## Configuring the JVM
 

@@ -25,6 +25,7 @@ public class CaffeineCacheConfig {
     public CacheManager cacheManager() {
         Caffeine<Object, Object> caffeineCacheBuilder =
                 Caffeine.newBuilder()
+                        .recordStats()
                         .expireAfterAccess(
                                 cacheExpiration, TimeUnit.HOURS);
 
