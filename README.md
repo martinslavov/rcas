@@ -28,6 +28,33 @@ Every cache lookup is logged at `INFO` as `HIT` or `MISS` per layer (Caffeine, t
 - Docker with Docker Compose
 - Access to the Docker Hardened Images registry (`docker login dhi.io`), needed to build the Docker image
 
+## Parallel Copilot sessions with Git worktrees
+
+On macOS, `.github/scripts/worktree-session.sh` creates an isolated worktree and `session/<name>` branch next to the
+repository, then opens it in IntelliJ IDEA. Set `JETBRAINS_APP` to your installed JetBrains application name when it is
+not `IntelliJ IDEA`. Configure the IDE to open projects in a new window if you want one window per Copilot session.
+
+Start a session with a unique lowercase name:
+
+```bash
+./.github/scripts/worktree-session.sh start cache-fix
+```
+
+The worktree is created at `../rcas-sessions/cache-fix`. To create it without opening the IDE, add `--no-open`.
+Start another session with a different name to get a separate folder and branch.
+
+After you have committed and merged the session branch into `origin/main`, archive the Copilot chat and clean up its
+worktree:
+
+```bash
+./.github/scripts/worktree-session.sh cleanup cache-fix
+```
+
+Cleanup fetches `origin/main` and refuses to delete the worktree if it contains uncommitted or untracked files, or if its
+branch has not been merged. On success it removes the worktree folder and the **local** branch; it never deletes a remote
+branch. The removed folder also includes ignored/generated files such as local IDE settings and build output. Archiving a
+Copilot chat does not trigger cleanup automatically, so run this command yourself.
+
 ## Build
 
 ```bash
