@@ -7,13 +7,10 @@ CONCURRENCY_LEVELS="${CONCURRENCY_LEVELS:-1 8}"
 REQUESTS_PER_WORKER="${REQUESTS_PER_WORKER:-100}"
 REQUEST_DELAY="${REQUEST_DELAY:-0.5}"
 
-case "$BASE_URL" in
-    http://localhost|http://localhost:*|http://127.0.0.1|http://127.0.0.1:*) ;;
-    *)
-        echo "BASE_URL must target localhost or 127.0.0.1" >&2
-        exit 2
-        ;;
-esac
+if ! [[ "$BASE_URL" =~ ^http://(localhost|127\.0\.0\.1)(:[0-9]+)?(/[^[:space:]\?\#\\]*)?$ ]]; then
+    echo "BASE_URL must target localhost or 127.0.0.1 with an optional numeric port and path" >&2
+    exit 2
+fi
 
 if ! [[ "$REQUESTS_PER_WORKER" =~ ^[1-9][0-9]*$ ]]; then
     echo "REQUESTS_PER_WORKER must be a positive integer" >&2
