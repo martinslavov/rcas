@@ -3,6 +3,12 @@ package com.gbp.rcas.service.impl;
 import com.gbp.rcas.model.Subscription;
 import com.gbp.rcas.model.User;
 
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.LoggerContext;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Property;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.cache.CacheManager;
@@ -14,6 +20,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -193,4 +200,207 @@ class CacheServiceImplTest {
 
         StepVerifier.create(result).expectNext(user).verifyComplete();
     }
+
+    @Test
+    void logsCaffeineThenRedisMissAtInfo() {
+        String redisKey = CACHE_NAME_USER + ":7";
+        when(hashOperations.get(redisKey, 7L)).thenReturn(Mono.empty());
+        CapturedLogger captured = captureLogger(CacheServiceImpl.class.getName(), Level.INFO);
+
+        try {
+            StepVerifier.create(cacheService.getCache(7L, CACHE_NAME_USER, Mono::empty, User.class))
+                    .verifyComplete();
+
+            assertEquals(List.of(
+                    "Caffeine cache MISS for " + CACHE_NAME_USER + ":7",
+                    "Redis cache MISS for " + CACHE_NAME_USER + ":7"),
+                    captured.appender().events().stream()
+                            .filter(event -> event.getLevel() == Level.INFO)
+                            .map(event -> event.getMessage().getFormattedMessage())
+                            .filter(message -> message.startsWith("Caffeine cache ") || message.startsWith("Redis cache "))
+                            .toList());
+        } finally {
+            captured.close();
+        }
+    }
+
+    @Test
+    void logsRedisHitAndThenCaffeineHitAtInfo() throws Exception {
+        User user = new User.UserBuilder().setId(8L).setUsername("redis-user").createUser();
+        String redisKey = CACHE_NAME_USER + ":8";
+        when(hashOperations.get(redisKey, 8L)).thenReturn(Mono.just(objectMapper.writeValueAsString(user)));
+        when(redisTemplate.expire(redisKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
+        CapturedLogger captured = captureLogger(CacheServiceImpl.class.getName(), Level.INFO);
+
+        try {
+            StepVerifier.create(cacheService.getCache(8L, CACHE_NAME_USER, Mono::empty, User.class))
+                    .expectNextMatches(value -> value.getId().equals(user.getId()))
+                    .verifyComplete();
+            StepVerifier.create(cacheService.getCache(8L, CACHE_NAME_USER, Mono::empty, User.class))
+                    .expectNextMatches(value -> value.getId().equals(user.getId()))
+                    .verifyComplete();
+
+            assertEquals(List.of(
+                    "Caffeine cache MISS for " + CACHE_NAME_USER + ":8",
+                    "Redis cache HIT for " + CACHE_NAME_USER + ":8",
+                    "Caffeine cache HIT for " + CACHE_NAME_USER + ":8"),
+                    captured.appender().events().stream()
+                            .filter(event -> event.getLevel() == Level.INFO)
+                            .map(event -> event.getMessage().getFormattedMessage())
+                            .filter(message -> message.startsWith("Caffeine cache ") || message.startsWith("Redis cache "))
+                            .toList());
+        } finally {
+            captured.close();
+        }
+    }
+
+
+    @Test
+    void logsSubscriptionListCaffeineThenRedisMissAtInfo() throws Exception {
+        Long id = -7L;
+        Subscription subscription = new Subscription(17L, "premium", 1, 1);
+        String redisKey = CACHE_NAME_SUBSCRIPTION + ":-7";
+        when(hashOperations.get(redisKey, id)).thenReturn(Mono.empty());
+        when(hashOperations.put(redisKey, id, objectMapper.writeValueAsString(List.of(subscription))))
+                .thenReturn(Mono.just(true));
+        when(redisTemplate.expire(redisKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
+        CapturedLogger captured = captureLogger(CacheServiceImpl.class.getName(), Level.INFO);
+
+        try {
+            StepVerifier.create(cacheService.getCache(id, CACHE_NAME_SUBSCRIPTION, Subscription.class,
+                    () -> Flux.just(subscription)))
+                    .expectNext(subscription)
+                    .verifyComplete();
+
+            assertEquals(List.of(
+                    "Caffeine cache MISS for " + CACHE_NAME_SUBSCRIPTION + ":-7",
+                    "Redis cache MISS for " + CACHE_NAME_SUBSCRIPTION + ":-7"),
+                    captured.appender().events().stream()
+                            .filter(event -> event.getLevel() == Level.INFO)
+                            .map(event -> event.getMessage().getFormattedMessage())
+                            .filter(message -> message.startsWith("Caffeine cache ") || message.startsWith("Redis cache "))
+                            .toList());
+        } finally {
+            captured.close();
+        }
+    }
+
+    @Test
+    void logsSubscriptionListRedisHitAndThenCaffeineHitAtInfo() throws Exception {
+        Long id = -8L;
+        Subscription subscription = new Subscription(18L, "premium", 1, 1);
+        String redisKey = CACHE_NAME_SUBSCRIPTION + ":-8";
+        when(hashOperations.get(redisKey, id))
+                .thenReturn(Mono.just(objectMapper.writeValueAsString(List.of(subscription))));
+        when(redisTemplate.expire(redisKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
+        CapturedLogger captured = captureLogger(CacheServiceImpl.class.getName(), Level.INFO);
+
+        try {
+            StepVerifier.create(cacheService.getCache(id, CACHE_NAME_SUBSCRIPTION, Subscription.class, Flux::empty))
+                    .expectNextMatches(value -> value.getId().equals(subscription.getId()))
+                    .verifyComplete();
+            StepVerifier.create(cacheService.getCache(id, CACHE_NAME_SUBSCRIPTION, Subscription.class, Flux::empty))
+                    .expectNextMatches(value -> value.getId().equals(subscription.getId()))
+                    .verifyComplete();
+
+            assertEquals(List.of(
+                    "Caffeine cache MISS for " + CACHE_NAME_SUBSCRIPTION + ":-8",
+                    "Redis cache HIT for " + CACHE_NAME_SUBSCRIPTION + ":-8",
+                    "Caffeine cache HIT for " + CACHE_NAME_SUBSCRIPTION + ":-8"),
+                    captured.appender().events().stream()
+                            .filter(event -> event.getLevel() == Level.INFO)
+                            .map(event -> event.getMessage().getFormattedMessage())
+                            .filter(message -> message.startsWith("Caffeine cache ") || message.startsWith("Redis cache "))
+                            .toList());
+        } finally {
+            captured.close();
+        }
+    }
+
+    @Test
+    void cacheWritesUseDedicatedDebugLoggerAndAreHiddenAtInfo() throws Exception {
+        String redisLoggerName = "com.gbp.rcas.cache.write";
+        CapturedLogger captured = captureLogger(redisLoggerName, Level.INFO);
+        String firstKey = CACHE_NAME_USER + ":9";
+        User firstUser = new User.UserBuilder().setId(9L).setUsername("database-user").createUser();
+        when(hashOperations.get(firstKey, 9L)).thenReturn(Mono.empty());
+        when(hashOperations.put(firstKey, 9L, objectMapper.writeValueAsString(firstUser)))
+                .thenReturn(Mono.just(true));
+        when(redisTemplate.expire(firstKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
+
+        try {
+            StepVerifier.create(cacheService.getCache(9L, CACHE_NAME_USER, () -> Mono.just(firstUser), User.class))
+                    .expectNext(firstUser)
+                    .verifyComplete();
+
+            assertEquals(List.of(), captured.appender().events());
+
+            captured.logger().setLevel(Level.DEBUG);
+            String secondKey = CACHE_NAME_USER + ":10";
+            User secondUser = new User.UserBuilder().setId(10L).setUsername("database-user").createUser();
+            when(hashOperations.get(secondKey, 10L)).thenReturn(Mono.empty());
+            when(hashOperations.put(secondKey, 10L, objectMapper.writeValueAsString(secondUser)))
+                    .thenReturn(Mono.just(true));
+            when(redisTemplate.expire(secondKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
+
+            StepVerifier.create(cacheService.getCache(10L, CACHE_NAME_USER, () -> Mono.just(secondUser), User.class))
+                    .expectNext(secondUser)
+                    .verifyComplete();
+
+            assertEquals(List.of(
+                    "Redis cache WRITE for " + secondKey,
+                    "Caffeine cache WRITE for " + secondKey),
+                    captured.appender().events().stream()
+                            .map(event -> event.getMessage().getFormattedMessage())
+                            .toList());
+            assertEquals(List.of(Level.DEBUG, Level.DEBUG), captured.appender().events().stream()
+                    .map(LogEvent::getLevel)
+                    .toList());
+            assertEquals(List.of(redisLoggerName, redisLoggerName), captured.appender().events().stream()
+                    .map(LogEvent::getLoggerName)
+                    .toList());
+        } finally {
+            captured.close();
+        }
+    }
+
+    private CapturedLogger captureLogger(String loggerName, Level level) {
+        LoggerContext context = (LoggerContext) LogManager.getContext(false);
+        org.apache.logging.log4j.core.Logger logger = context.getLogger(loggerName);
+        Level previousLevel = logger.getLevel();
+        CapturingAppender appender = new CapturingAppender("test-" + loggerName);
+        appender.start();
+        logger.addAppender(appender);
+        logger.setLevel(level);
+        return new CapturedLogger(logger, previousLevel, appender);
+    }
+
+    private record CapturedLogger(org.apache.logging.log4j.core.Logger logger,
+                                  Level previousLevel,
+                                  CapturingAppender appender) {
+        void close() {
+            logger.removeAppender(appender);
+            logger.setLevel(previousLevel);
+            appender.stop();
+        }
+    }
+
+    private static final class CapturingAppender extends AbstractAppender {
+
+        private final List<LogEvent> events = new ArrayList<>();
+
+        private CapturingAppender(String name) {
+            super(name, null, null, true, Property.EMPTY_ARRAY);
+        }
+
+        @Override
+        public void append(LogEvent event) {
+            events.add(event.toImmutable());
+        }
+
+        private List<LogEvent> events() {
+            return events;
+        }
+    }
+
 }
