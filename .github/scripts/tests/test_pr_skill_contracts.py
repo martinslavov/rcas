@@ -7,6 +7,13 @@ SKILLS = ROOT / ".github" / "skills"
 
 
 class PrSkillContractsTest(unittest.TestCase):
+    def test_local_worker_handoff_precedes_task_stage_instructions(self):
+        instructions = (ROOT / ".github" / "copilot-instructions.md").read_text(encoding="utf-8")
+        self.assertIn("Local-worker handoff takes precedence over all task-stage instructions below", instructions)
+        self.assertIn("This applies with or without either skip tag", instructions)
+        self.assertIn("Do not start or wait for Architect, Engineer, PR Review, QA, CI or merge", instructions)
+        self.assertIn("report\n   the issue URL and stop here", instructions)
+
     def test_cloud_handoff_is_default_and_keeps_merge_gates(self):
         skill = (SKILLS / "create-pr-cloud" / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("name: create-pr-cloud", skill)

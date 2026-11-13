@@ -38,6 +38,19 @@ class TaskInputTest(unittest.TestCase):
 
         self.assertEqual(("local-agent", "skip-architect"), parsed.labels)
 
+    def test_local_worker_handoff_with_both_skip_tags_preserves_issue_content(self):
+        parsed = parse_task_input(
+            "TASK-NAME:add-cache-metrics\n"
+            "DEVELOPMENT: medium\n"
+            "TAG: local-agent,skip-architect,skip-product-owner\n"
+            "DESCRIPTION: Add cache hit and miss metrics. Cover the change with tests.")
+
+        self.assertEqual("add-cache-metrics", parsed.task_name)
+        self.assertEqual("Add cache hit and miss metrics. Cover the change with tests.", parsed.description)
+        self.assertEqual(
+            ("local-agent", "skip-architect", "skip-product-owner", "development:medium"),
+            parsed.labels)
+
     def test_development_is_optional_and_case_insensitive(self):
         parsed = parse_task_input("TASK-NAME:task\nDEVELOPMENT: Medium\nDo this")
 

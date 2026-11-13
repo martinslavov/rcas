@@ -16,7 +16,7 @@ task input starts with `TASK-NAME:<name>`, optionally followed by `DEVELOPMENT: 
 `TAG: cloud-agent,local-agent,skip-architect,skip-product-owner` (any supported subset; do not combine the two worker labels), then a description (optionally introduced by
 `DESCRIPTION:`). `.github/scripts/task_input.py` consumes this metadata; `DEVELOPMENT` becomes a `development:<level>`
 issue label, and control lines are never copied into the issue title/body. `skip-product-owner` tells the main agent to
-create a concise task issue directly instead of invoking Product Owner. `skip-architect` starts Engineer directly and
+create a concise task issue directly instead of invoking Product Owner. `skip-architect` lets the selected flow start Engineer directly and
 explicitly bypasses architecture comments and approval, including the `architecture-approval-required` gate. This opt-out
 does not bypass cloud branch/actor verification, PR creation safeguards, CI, PR Review, QA or merge gates. The legacy
 first-line TAG order remains accepted. `LABEL:BACKLOG,TASK-NAME:` retains its backlog behavior and may also have metadata.
@@ -88,6 +88,11 @@ required; the local worker does not repair or replace that setup.
 For local execution, create an owner-authored issue with `local-agent` instead of `cloud-agent`. The tags are mutually
 exclusive, and the worker rejects issues authored by anyone other than `martinslavov`, as well as `backlog`,
 `requires-pro`, failed, or human-review tasks. Issues without either label are never picked up by a background worker.
+After issue creation, the current session reports the issue URL and stops without invoking or waiting for the worker or
+any implementation, review or QA agent. This handoff applies regardless of skip tags: `skip-product-owner` makes the
+current session create the issue directly, and `skip-architect` makes the worker start Engineer without Architect or
+architecture approval. The worker must be started separately; the issue waits if it is not running or its task-state
+record is not yet available. Backlog tasks remain parked.
 Use `/create-issue` for Product Owner intake only, then implement the TODO issue yourself. The no-task-issue shortcut is
 `/create-pr-local`; it creates a PR directly and does not create the automatic PR tracking issue.
 
@@ -108,9 +113,10 @@ No Copilot model is invoked while the queue is empty; eligible tasks consume nor
 The worker requires `gh` authenticated as `@martinslavov`, the Copilot CLI, write access to the repository, and Docker/JDK
 availability for tests that require them. It runs Copilot in non-interactive `--allow-all-tools` mode, which permits code
 and shell tools in the isolated worktree. Only use it for owner-authored issues that you trust. It does not expose a cloud
-Actions secret, but local GitHub credentials are available to the worker process. Architecture approval, PR Review, QA,
-all required CI checks on the current head SHA, absence of human PR comments, and absence of `needs-human-review` are
-required before merge. If a stage fails, the worker adds `local-agent-failed` and will not spend more tokens on that issue;
+Actions secret, but local GitHub credentials are available to the worker process. Architecture approval is required when
+applicable unless `skip-architect` is present. PR Review, QA, all required CI checks on the current head SHA, absence of
+human PR comments, and absence of `needs-human-review` are required before merge. If a stage fails, the worker adds
+`local-agent-failed` and will not spend more tokens on that issue;
 inspect the failure, then remove that label to retry. If `needs-human-review` is also present, only a human may remove it;
 remove both labels when explicitly resuming. The worker never force-pushes, merges while a gate is pending, or bypasses a
 failed orchestrator transition.
