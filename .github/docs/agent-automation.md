@@ -98,6 +98,9 @@ Use `/create-issue` for Product Owner intake only, then implement the TODO issue
 
 Run the local worker manually from a clean, up-to-date `main` checkout:
 
+A linked `main` worktree is also supported. PR bodies use isolated temporary directories rather than `.git/`,
+which is a file in a linked worktree.
+
 ```bash
 python3 .github/scripts/local_agent_worker.py
 python3 .github/scripts/local_agent_worker.py --once

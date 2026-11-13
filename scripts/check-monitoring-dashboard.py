@@ -41,6 +41,9 @@ required_titles = {
     "Caffeine entries and evictions",
     "Target availability, process CPU, JVM heap",
     "Logical reads — total in selected period by source and outcome",
+    "HTTP requests / second by status code",
+    "HTTP requests / second by status class",
+    "HTTP requests — total in selected period by status code",
 }
 assert required_titles <= titles, f"Missing panels: {required_titles - titles}"
 
@@ -56,6 +59,15 @@ assert any("rate(" in query and "[$__rate_interval]" in query for query in queri
 assert any("increase(" in query and "[$__range]" in query for query in queries)
 assert any("histogram_quantile(0.95" in query for query in queries)
 assert any("histogram_quantile(0.99" in query for query in queries)
+for title, grouping, window in (
+    ("HTTP requests / second by status code", "sum by (status)", "rate("),
+    ("HTTP requests / second by status class", "sum by (outcome)", "rate("),
+    ("HTTP requests — total in selected period by status code", "sum by (status)", "increase("),
+):
+    status_query = next(panel["targets"][0]["expr"] for panel in panels if panel["title"] == title)
+    assert grouping in status_query and window in status_query, title
+    assert "http_server_requests_seconds_count" in status_query, title
+    assert 'uri!~"/actuator.*"' in status_query, title
 ratio_query = next(
     panel["targets"][0]["expr"] for panel in panels
     if panel["title"] == "Cache hit ratio (hits / (hits + misses))"

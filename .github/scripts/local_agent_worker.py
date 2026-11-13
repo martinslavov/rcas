@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Iterator
@@ -222,9 +223,14 @@ class LocalAgentWorker:
             issues = json.loads(output)
         except json.JSONDecodeError as exc:
             raise WorkerError("gh issue list returned malformed JSON") from exc
-        issues = [{**item, "user": item.get("author"), "state": "open"} for item in issues]
-        issues = [item for item in issues if eligible_issue(item, self.owner)]
-        return sorted(issues, key=lambda item: (item.get("createdAt", ""), item["number"]))
+        issues = [
+            {**item, "user": item.get("author"), "state": "open"}
+            for item in issues
+        ]
+        return sorted(
+            (item for item in issues if eligible_issue(item, self.owner)),
+            key=lambda item: (item.get("createdAt", ""), item["number"]),
+        )
 
     def issue_details(
         self, number: int, *, require_eligible: bool = True,
@@ -492,9 +498,9 @@ class LocalAgentWorker:
         body = build_pr_body(
             template_path.read_text(encoding="utf-8"), issue["number"], issue.get("body") or "",
         )
-        temp_body = self.repo_root / f".git/local-agent-pr-{issue['number']}.md"
-        temp_body.write_text(body, encoding="utf-8")
-        try:
+        with tempfile.TemporaryDirectory(prefix="rcas-local-agent-pr-") as temp_dir:
+            temp_body = Path(temp_dir) / f"pr-{issue['number']}.md"
+            temp_body.write_text(body, encoding="utf-8")
             args = [
                 "gh", "pr", "create", "-R", REPOSITORY, "--base", "main", "--head", branch,
                 "--title", issue["title"], "--body-file", str(temp_body), "--assignee", "@me",
@@ -508,8 +514,6 @@ class LocalAgentWorker:
             if not any(label in issue_labels for label in ("minor", "major")):
                 args.extend(["--label", "minor"])
             output = _run(args, self.repo_root)
-        finally:
-            temp_body.unlink(missing_ok=True)
         match = re.search(r"/pull/(\d+)\b", output)
         if not match:
             raise WorkerError("gh pr create did not return a PR URL")

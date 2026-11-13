@@ -38,6 +38,69 @@ class LocalAgentWorkerTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "multiple"):
             task_state(comments * 2, 41)
 
+    def test_polling_processes_owner_issues_oldest_first(self):
+        worker = LocalAgentWorker(Path.cwd(), poll_seconds=60, max_rounds=5)
+        worker.owner = "martinslavov"
+        issues = [
+            {
+                "number": number,
+                "title": f"Task {number}",
+                "createdAt": f"2026-11-{number:02d}T00:00:00Z",
+                "author": {"login": author},
+                "labels": [{"name": "local-agent"}],
+            }
+            for number, author in ((22, "martinslavov"), (21, "martinslavov"), (20, "contributor"))
+        ]
+        comments = [{"body": '<!-- task-state: {"issue": 21, "state": "todo"} -->'}]
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(worker, "lock_directory", return_value=Path(directory)),
+            patch("local_agent_worker._run", return_value=json.dumps(issues)),
+            patch.object(worker, "issue_details", return_value=(
+                {**issues[1], "user": issues[1]["author"], "state": "open"}, comments,
+            )) as details,
+            patch.object(worker, "run_issue") as run_issue,
+        ):
+            self.assertTrue(worker.process_once())
+        details.assert_called_once_with(21, require_eligible=False)
+        run_issue.assert_called_once_with(21)
+
+    def test_pr_creation_in_worktree_cleans_up_temporary_body(self):
+        for fail in (False, True):
+            with self.subTest(fail=fail), tempfile.TemporaryDirectory() as root:
+                root = Path(root).resolve()
+                (root / ".git").write_text("gitdir: /example/worktrees/test\n", encoding="utf-8")
+                template = root / ".github/PULL_REQUEST_TEMPLATE/pull_request_template.md"
+                template.parent.mkdir(parents=True)
+                template.write_text("# Pull-request relations\n- Closes #<issue>\n", encoding="utf-8")
+                worker = LocalAgentWorker(root, poll_seconds=60, max_rounds=5)
+                body_paths = []
+
+                def run(args, cwd=None):
+                    if args[:3] == ["gh", "pr", "list"]:
+                        return "[]"
+                    self.assertEqual(["gh", "pr", "create"], args[:3])
+                    self.assertEqual(root, cwd)
+                    body_path = Path(args[args.index("--body-file") + 1])
+                    body_paths.append(body_path)
+                    body = body_path.read_text(encoding="utf-8")
+                    self.assertIn("- Closes #41", body)
+                    self.assertIn("<!-- ship-pr -->", body)
+                    if fail:
+                        raise WorkerError("PR creation failed")
+                    return "https://github.com/martinslavov/rcas/pull/77"
+
+                with patch("local_agent_worker._run", side_effect=run):
+                    if fail:
+                        with self.assertRaisesRegex(WorkerError, "PR creation failed"):
+                            worker.create_or_reuse_pr({"number": 41, "title": "Task"}, "feature/task")
+                    else:
+                        self.assertEqual(
+                            77, worker.create_or_reuse_pr({"number": 41, "title": "Task"}, "feature/task"),
+                        )
+                self.assertEqual(1, len(body_paths))
+                self.assertFalse(body_paths[0].parent.exists())
+
     def test_branch_slug_is_ascii_safe_and_has_fallback(self):
         self.assertEqual("cache-refactor", task_slug("Cache refactor!"))
         self.assertEqual("task", task_slug("Локална задача"))
