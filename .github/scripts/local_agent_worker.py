@@ -645,7 +645,10 @@ class LocalAgentWorker:
         if state["state"] != "merge":
             raise WorkerError(f"issue #{issue['number']} is not in merge state: {state['state']}")
         try:
-            _run(["gh", "pr", "merge", str(pr), "-R", REPOSITORY, "--merge", "--delete-branch"])
+            _run([
+                "gh", "pr", "merge", str(pr), "-R", REPOSITORY, "--merge",
+                "--delete-branch", "--match-head-commit", sha,
+            ])
         except WorkerError:
             if not self.pr_info(pr).get("merged"):
                 raise

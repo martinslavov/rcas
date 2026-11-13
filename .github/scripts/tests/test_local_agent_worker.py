@@ -1,9 +1,11 @@
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from local_agent_worker import (
     LOCAL_FAILED_LABEL,
     LocalAgentWorker,
+    WorkerError,
     build_pr_body,
     eligible_issue,
     task_slug,
@@ -62,6 +64,34 @@ class LocalAgentWorkerTest(unittest.TestCase):
         self.assertIn("Do not post inline PR reviews", review)
         self.assertIn("verification-only local-worker run", qa)
         self.assertIn("do not edit files or push", qa)
+
+    def test_merge_uses_validated_head_and_stops_when_head_changes(self):
+        sha = "a" * 40
+        issue = {"number": 41, "title": "test"}
+        eligible = {"state": "open", "user": {"login": "martinslavov"}, "labels": [{"name": "local-agent"}]}
+        worker = LocalAgentWorker(Path.cwd(), poll_seconds=60, max_rounds=5)
+        worker.owner = "martinslavov"
+        merge_command = [
+            "gh", "pr", "merge", "77", "-R", "martinslavov/rcas", "--merge",
+            "--delete-branch", "--match-head-commit", sha,
+        ]
+        with (
+            patch("local_agent_worker._gh_json", return_value=eligible),
+            patch.object(worker, "pr_info", side_effect=[
+                {"head": {"sha": sha}, "state": "open", "draft": False},
+                {"head": {"sha": "b" * 40}, "state": "open", "merged": False},
+            ]),
+            patch.object(worker, "labels", return_value=set()),
+            patch.object(worker, "status_for", return_value="success"),
+            patch.object(worker, "ci_state", return_value="success"),
+            patch.object(worker, "has_human_comments", return_value=False),
+            patch.object(worker, "orchestrator", return_value={"state": "merge"}) as orchestrator,
+            patch("local_agent_worker._run", side_effect=WorkerError("head changed")) as run,
+        ):
+            with self.assertRaisesRegex(WorkerError, "head changed"):
+                worker.merge_if_ready(issue, 77, sha, 123)
+            run.assert_called_once_with(merge_command)
+            orchestrator.assert_called_once_with("state", "41")
 
 
 if __name__ == "__main__":
