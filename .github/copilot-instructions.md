@@ -26,17 +26,24 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 - `local-agent` opts an owner-authored issue into `.github/scripts/local_agent_worker.py`; it runs local Copilot CLI sessions
   in separate Git worktrees and handles PR Review, QA, CI and merge. Never combine it with `cloud-agent`. Issues from other
   authors, `backlog`, `requires-pro`, failed, or human-review tasks are not run.
+- **Local-worker handoff takes precedence over all task-stage instructions below.** For any `local-agent` task, create the
+  issue with every parsed label, report its URL and that it is queued for the separately started local worker, and end the
+  current turn. Do not start or wait for Architect, Engineer, PR Review, QA, CI or merge in the current session, and do not
+  start the worker on the user's behalf. This applies with or without either skip tag. Do not claim that the worker is
+  running or has picked up the issue unless verified. A `backlog` issue remains parked.
 - Cloud tasks use the `cloud-agent` label and `/create-pr-cloud` handoffs.
 - `/create-issue` invokes the Product Owner and stops after creating a normal TODO issue; no Architect, Engineer, branch,
   or PR is started. Use it when you want to implement the issue yourself later.
-- When both skip tags are present, create the issue directly and start the Engineer. Other labels and issue controls,
-  including `backlog`, continue to apply. A `backlog` task remains parked until a human moves it to TODO.
+- When both skip tags are present, create the issue directly. For `local-agent`, end the current turn as described above;
+  the worker starts the Engineer. For other eligible task flows, start the Engineer through that flow. Other labels and issue
+  controls, including `backlog`, continue to apply.
 - `TASK-NAME:<name>` (default, no TAG): the Product Owner creates the issue without `backlog`, `cloud-agent` or `local-agent`;
   it lands in `TODO` for the interactive local flow and is not picked up by a background worker. Use `/create-issue` when
   you want Product Owner intake only and will implement the issue yourself later.
-- `TASK-NAME:<name>` with `TAG: local-agent`: the Product Owner creates an owner-authored issue opted into the local worker.
-  The worker must be running; it creates an isolated worktree and local Copilot sessions, creates a marked PR, runs the
-  normal review/QA/CI gates and merges only when every required condition passes.
+- `TASK-NAME:<name>` with `TAG: local-agent`: create an owner-authored issue through Product Owner unless
+  `skip-product-owner` is present, in which case the main agent creates it directly. Report the URL and stop. The separately
+  started worker creates an isolated worktree and local Copilot sessions, creates a marked PR, runs the normal review/QA/CI
+  gates and merges only when every required condition passes.
 - `LABEL:BACKLOG,TASK-NAME:<name>` (the `LABEL:` prefix is case-insensitive; the description follows as usual): the Product
   Owner creates the issue with the `backlog` label, so it lands in `Backlog`. Stop after the issue is created and report its
   link; no Architect, branch or PR. Backlog items are never processed while they are in `Backlog`. An optional second-line
@@ -95,13 +102,15 @@ Six custom agents (in `.github/agents/`) do the work:
   concrete behaviour-verifying evidence, posts the AC → evidence table and sets the `Definition of Done` commit status; never
   changes code.
 
-When a task has the `TASK-NAME:` line, run the applicable stages in order (the main agent coordinates):
+For `local-agent`, perform only issue intake and return as specified in **Local-worker handoff** above; the worker owns
+all later stages. For other `TASK-NAME:` tasks, run the applicable stages in order (the main agent coordinates):
 Product Owner (unless `skip-product-owner`) → Architect (unless `skip-architect`) → user approval when required →
 Engineer → `/create-pr-cloud` → PR Review → QA → merge → elapsed time recorded on the issue and PR:
 
 1. Unless `skip-product-owner` is present, delegate the whole input to `product-owner-agent`. It returns the issue number,
    URL and the branch name. With `skip-product-owner`, parse the input with `.github/scripts/task_input.py` and create the
-   issue directly using the parsed task name, description and labels; do not invoke Product Owner.
+   issue directly using the parsed task name, description and labels; do not invoke Product Owner. For `local-agent`, report
+   the issue URL and stop here; do not proceed to step 2 or any later step in this session.
 2. Unless `skip-architect` is present, delegate the issue to `architect-agent`. It posts exactly one design note comment containing
    `<!-- architect-design-note -->` with affected components, interfaces/contracts, data/migrations, risks/mitigations,
    test plan and `Approval required: yes/no`, or an auditable skip comment containing `<!-- architect-skipped -->` and
@@ -120,8 +129,7 @@ Engineer → `/create-pr-cloud` → PR Review → QA → merge → elapsed time 
    Review intake. For a cloud handoff, the main agent uses `/create-pr-cloud`, whose guarded intake starts cloud PR Review
    without re-running Architect or Engineer; stop local coordination after handoff. For issue-backed interactive local work,
    the coordinator creates the marked task PR and calls `orchestrator.py intake-pr-review <issue> --pr <pr>` without
-   `--cloud-agent`, sets gates to pending, and owns the PR template's "Acceptance criteria → evidence" section. A `local-agent`
-   issue is handled by the local worker, not by cloud intake.
+   `--cloud-agent`, sets gates to pending, and owns the PR template's "Acceptance criteria → evidence" section.
 5. For the interactive local task path only, delegate the PR number to `pr-review-agent`. It independently reads the issue and full diff, posts its findings, and always
    sets a final `PR Review` status on the current head SHA. For `architecture-approval-required` issues, it also verifies
    the implementation against the approved design note; a material deviation is at least `major`, and it requires backward

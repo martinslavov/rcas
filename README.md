@@ -366,13 +366,15 @@ metadata, creates the issue with the selected labels and keeps control lines out
 instead has the main agent create the task issue directly; `skip-architect` starts Engineer directly and explicitly bypasses
 architecture comments and approval, including `architecture-approval-required`. With `cloud-agent`, the trusted cloud workflow
 dispatches Architect unless `skip-architect` is set, then creates/reuses an eligible `feature/<issue>-<task-slug>` PR and
-hands off to PR Review → QA → automatic merge. `local-agent` instead opts an owner-authored issue into the local worker below.
+hands off to PR Review → QA → automatic merge. `local-agent` instead opts an owner-authored issue into the local worker below:
+the current session reports the issue URL and stops after intake, regardless of the skip tags. The separately started worker
+handles all later stages; it does not start automatically with the issue.
 The five-minute cloud poll recovers a missed PR/intake. For backward compatibility,
 a first-line TAG followed by the task-name line is still accepted. `LABEL:BACKLOG,TASK-NAME:<name>` also remains supported,
 with optional metadata after the task name. See [Agent automation](.github/docs/agent-automation.md).
 
-The interactive workflow is Product Owner (unless `skip-product-owner`) → Architect (unless `skip-architect`) →
-explicit user approval when required → Engineer → (`local-agent` worker, cloud PR workflow for `cloud-agent` tasks, or `/create-pr-cloud` manually) → PR Review → QA → merge → elapsed time recorded on the issue and PR
+The interactive workflow for tasks without `local-agent` is Product Owner (unless `skip-product-owner`) → Architect (unless `skip-architect`) →
+explicit user approval when required → Engineer → (cloud PR workflow for `cloud-agent` tasks or `/create-pr-cloud` manually) → PR Review → QA → merge → elapsed time recorded on the issue and PR
 (`.github/scripts/post_task_elapsed.sh`). For architecture changes (new module/layer/component or cache
 topology), database schema/migrations, messaging/Kafka, public HTTP API or security changes, the Architect applies
 `architecture-approval-required`; the orchestrator must wait for the user's explicit approval recorded on the issue as
@@ -427,8 +429,8 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 |-------|--------|
 | `TASK-NAME:<name>` then optional `DEVELOPMENT`/`TAG` metadata | Issue created in `TODO`; each TAG becomes an issue label, and `DEVELOPMENT` becomes `development:<level>` |
 | `TASK-NAME:<name>` plus `TAG: cloud-agent` | Starts cloud automation: Architect then Engineer, unless `skip-architect` opts out; PR Review, QA and merge gates remain |
-| `TASK-NAME:<name>` plus `TAG: local-agent` | Starts local automation when the worker is running; local sessions, separate worktrees, PR Review, QA, CI and gated merge |
-| `TAG: skip-product-owner,skip-architect` | Main agent creates the issue directly and starts Engineer without Product Owner, Architect or architecture approval |
+| `TASK-NAME:<name>` plus `TAG: local-agent` | Current session reports the issue URL and stops; the separately started worker handles local sessions, worktrees, PR Review, QA, CI and gated merge |
+| `TAG: skip-product-owner,skip-architect` | Main agent creates the issue directly; the selected flow starts Engineer without Product Owner, Architect or architecture approval. With `local-agent`, the worker starts Engineer after handoff |
 | `TASK-NAME:<name>` without TAG | Product Owner creates a TODO issue for the interactive local flow; no background worker starts |
 | `/create-issue` | Product Owner creates a TODO issue only; no implementation starts, so you can finish it yourself later |
 | `/create-pr-cloud` | Creates/reuses a task issue and PR; cloud automation runs review, QA, bounded fixes and gated automatic merge |
@@ -443,6 +445,7 @@ issue label but does not choose the execution flow.
 | Input tag | Issue creation | Execution |
 |------------|----------------|-----------|
 | `TAG: local-agent` | Product Owner creates the issue with `local-agent`. | The local worker picks it up when running. It works in an isolated worktree and proceeds through PR, review, QA, CI and gated merge. The issue must be owner-authored. |
+| `TAG: local-agent,skip-architect,skip-product-owner` | The current session creates the issue directly, reports its URL and stops. | The separately started local worker runs Engineer without Architect or architecture approval, then PR Review, QA, CI and gated merge. |
 | `TAG: cloud-agent` | Product Owner creates the issue with `cloud-agent`. | GitHub Actions starts the cloud flow: Architect, then Engineer, followed by PR Review, QA, CI and automatic merge when all required gates pass. |
 | `TAG: cloud-agent,skip-architect,skip-product-owner` | The main agent creates the issue directly with the supplied labels; Product Owner is skipped. | The cloud flow starts Engineer directly without Architect or architecture approval. PR Review, QA, CI and merge gates still apply. |
 
