@@ -113,9 +113,10 @@ No Copilot model is invoked while the queue is empty; eligible tasks consume nor
 The worker requires `gh` authenticated as `@martinslavov`, the Copilot CLI, write access to the repository, and Docker/JDK
 availability for tests that require them. It runs Copilot in non-interactive `--allow-all-tools` mode, which permits code
 and shell tools in the isolated worktree. Only use it for owner-authored issues that you trust. It does not expose a cloud
-Actions secret, but local GitHub credentials are available to the worker process. Architecture approval, PR Review, QA,
-all required CI checks on the current head SHA, absence of human PR comments, and absence of `needs-human-review` are
-required before merge. If a stage fails, the worker adds `local-agent-failed` and will not spend more tokens on that issue;
+Actions secret, but local GitHub credentials are available to the worker process. Architecture approval is required when
+applicable unless `skip-architect` is present. PR Review, QA, all required CI checks on the current head SHA, absence of
+human PR comments, and absence of `needs-human-review` are required before merge. If a stage fails, the worker adds
+`local-agent-failed` and will not spend more tokens on that issue;
 inspect the failure, then remove that label to retry. If `needs-human-review` is also present, only a human may remove it;
 remove both labels when explicitly resuming. The worker never force-pushes, merges while a gate is pending, or bypasses a
 failed orchestrator transition.
