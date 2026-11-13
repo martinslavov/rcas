@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   create-issue:
+    if: ${{ !contains(github.event.pull_request.body, '<!-- no-task-issue -->') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

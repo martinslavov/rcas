@@ -5,7 +5,11 @@ from copilot_agent_automation import (
     Dispatch,
     ENTRY_LABEL,
     HUMAN_REVIEW_LABEL,
+    LOCAL_AGENT_LABEL,
+    QUICK_PR_AUTO_MARKER,
+    QUICK_PR_MARKER,
     REQUIRED_CHECKS,
+    _event_pr_numbers,
     get_dispatches,
     merge_if_ready,
 )
@@ -59,6 +63,11 @@ class FakeGitHub:
             }
         ]
         self.merged = False
+
+    def make_quick_pr(self):
+        self.pr["user"] = {"login": self.owner}
+        self.pr["body"] = f"{QUICK_PR_MARKER}\n{QUICK_PR_AUTO_MARKER}"
+        self.issue["labels"] = []
 
     def pages(self, path):
         if "/issues?" in path:
@@ -119,7 +128,7 @@ class CopilotDispatchTest(unittest.TestCase):
             }
         )
 
-    def test_agent_read_label_starts_architect(self):
+    def test_cloud_agent_label_starts_architect(self):
         event = {
             "action": "labeled",
             "label": {"name": ENTRY_LABEL},
@@ -147,7 +156,7 @@ class CopilotDispatchTest(unittest.TestCase):
             get_dispatches("issues", event, FakeGitHub()),
         )
 
-    def test_backlog_agent_read_issue_waits_until_moved_to_todo(self):
+    def test_backlog_cloud_agent_issue_waits_until_moved_to_todo(self):
         api = FakeGitHub()
         api.issue["labels"].append({"name": "backlog"})
         api.pr["labels"] = []
@@ -239,6 +248,28 @@ class CopilotDispatchTest(unittest.TestCase):
         self.assertEqual(
             [Dispatch("issue", 42, "senior-java-software-engineer")],
             get_dispatches("issue_comment", event, api),
+        )
+
+    def test_local_agent_issue_is_not_dispatched_to_cloud_agent(self):
+        api = FakeGitHub()
+        api.issue["labels"].append({"name": LOCAL_AGENT_LABEL})
+        event = {
+            "issue": api.issue,
+            "comment": {
+                "body": "<!-- architect-skipped --> skipped: low risk",
+                "user": {"login": api.owner},
+            },
+        }
+
+        self.assertEqual([], get_dispatches("issue_comment", event, api))
+        self.assertEqual([], get_dispatches("schedule", {}, api))
+        self.assertEqual(
+            [],
+            get_dispatches(
+                "status",
+                {"context": "PR Review", "state": "success", "sha": api.pr["head"]["sha"]},
+                api,
+            ),
         )
 
     def test_review_success_dispatches_qa_for_current_agent_pr(self):
@@ -370,7 +401,7 @@ class CopilotDispatchTest(unittest.TestCase):
             get_dispatches("schedule", {}, api),
         )
 
-    def test_issue_agent_read_is_not_copied_to_the_pr(self):
+    def test_issue_cloud_agent_is_not_copied_to_the_pr(self):
         api = FakeGitHub()
         api.pr["labels"] = []
         get_dispatches("schedule", {}, api)
@@ -385,7 +416,7 @@ class CopilotDispatchTest(unittest.TestCase):
         api.pr["body"] = "Closes #42"
         self.assertEqual([], get_dispatches("schedule", {}, api))
 
-    def test_agent_read_pr_label_starts_review_without_restarting_engineer_stages(self):
+    def test_cloud_agent_pr_label_starts_review_without_restarting_engineer_stages(self):
         api = FakeGitHub()
         api.statuses = []
         event = {
@@ -398,7 +429,7 @@ class CopilotDispatchTest(unittest.TestCase):
             get_dispatches("pull_request", event, api),
         )
 
-    def test_agent_read_pr_label_starts_qa_when_review_succeeded_and_qa_status_is_absent(self):
+    def test_cloud_agent_pr_label_starts_qa_when_review_succeeded_and_qa_status_is_absent(self):
         api = FakeGitHub()
         api.statuses = [
             status for status in api.statuses
@@ -414,7 +445,7 @@ class CopilotDispatchTest(unittest.TestCase):
         api.issue["labels"] = []
         self.assertEqual(expected, get_dispatches("schedule", {}, api))
 
-    def test_agent_read_pr_label_starts_qa_when_qa_status_is_pending(self):
+    def test_cloud_agent_pr_label_starts_qa_when_qa_status_is_pending(self):
         api = FakeGitHub()
         next(status for status in api.statuses if status["context"] == "QA Agent")["state"] = "pending"
         event = {
@@ -476,8 +507,102 @@ class CopilotDispatchTest(unittest.TestCase):
             event = {"context": context, "state": state, "sha": "a" * 40}
             self.assertEqual([], get_dispatches("status", event, api))
 
+    def test_quick_pr_dispatches_review_then_qa(self):
+        api = FakeGitHub()
+        api.make_quick_pr()
+        api.statuses = []
+        event = {"action": "labeled", "label": {"name": ENTRY_LABEL}, "pull_request": {"number": 43}}
+        self.assertEqual([Dispatch("pull", 43, "pr-review-agent", "a" * 40)],
+                         get_dispatches("pull_request", event, api))
+        api.statuses = [{"context": "PR Review", "state": "success"}]
+        self.assertEqual([Dispatch("pull", 43, "senior-qa-engineer", "a" * 40)],
+                         get_dispatches("status", {"context": "PR Review", "state": "success", "sha": "a" * 40}, api))
+        api.statuses[0]["state"] = "failure"
+        self.assertEqual([], get_dispatches("status", {"context": "PR Review", "state": "success", "sha": "a" * 40}, api))
+        self.assertEqual([], get_dispatches("schedule", {}, api))
+
+    def test_quick_pr_requires_all_opt_in_and_trust_guards(self):
+        cases = (
+            ("missing auto marker", lambda pr: pr.update(body=QUICK_PR_MARKER)),
+            ("missing no-issue marker", lambda pr: pr.update(body=QUICK_PR_AUTO_MARKER)),
+            ("ship marker", lambda pr: pr.update(body=pr["body"] + "\n<!-- ship-pr -->")),
+            ("linked issue", lambda pr: pr.update(body=pr["body"] + "\nCloses #42")),
+            ("other author", lambda pr: pr.update(user={"login": "someone"})),
+            ("other repo", lambda pr: pr["head"].update(repo={"full_name": "someone/rcas"})),
+            ("wrong branch", lambda pr: pr["head"].update(ref="main")),
+            ("draft", lambda pr: pr.update(draft=True)),
+            ("missing label", lambda pr: pr.update(labels=[])),
+            ("human review", lambda pr: pr["labels"].append({"name": HUMAN_REVIEW_LABEL})),
+        )
+        for name, change in cases:
+            with self.subTest(name=name):
+                api = FakeGitHub()
+                api.make_quick_pr()
+                change(api.pr)
+                self.assertEqual([], get_dispatches("schedule", {}, api))
+                self.assertFalse(merge_if_ready(api, 43))
+
+    def test_quick_pr_never_dispatches_engineer_on_failure(self):
+        api = FakeGitHub()
+        api.make_quick_pr()
+        api.statuses[0]["state"] = "failure"
+        event = {"context": "PR Review", "state": "failure", "sha": "a" * 40}
+        self.assertEqual([], get_dispatches("status", event, api))
+        self.assertEqual([], get_dispatches("schedule", {}, api))
+        api.check_runs[0]["conclusion"] = "failure"
+        event = {"action": "completed", "check_suite": {"head_sha": "a" * 40, "conclusion": "failure"}}
+        self.assertEqual([], get_dispatches("check_suite", event, api))
+        api.statuses = [
+            {"context": "PR Review", "state": "success"},
+            {"context": "QA Agent", "state": "failure"},
+        ]
+        event = {"action": "labeled", "label": {"name": ENTRY_LABEL}, "pull_request": {"number": 43}}
+        self.assertEqual([], get_dispatches("pull_request", event, api))
+        self.assertEqual([], get_dispatches("status", {"context": "PR Review", "state": "success", "sha": "a" * 40}, api))
+
 
 class AutoMergeTest(unittest.TestCase):
+    def test_quick_pr_merges_without_issue_elapsed_record(self):
+        api = FakeGitHub()
+        api.make_quick_pr()
+        api.comments = []
+        with patch("copilot_agent_automation.subprocess.run") as run:
+            self.assertTrue(merge_if_ready(api, 43))
+        self.assertTrue(api.merged)
+        run.assert_not_called()
+
+    def test_quick_pr_is_discovered_from_events_and_schedule(self):
+        api = FakeGitHub()
+        api.make_quick_pr()
+        self.assertEqual([43], _event_pr_numbers("schedule", {}, api))
+        self.assertEqual([43], _event_pr_numbers("status", {"sha": "a" * 40}, api))
+        self.assertEqual([43], _event_pr_numbers("check_suite", {"check_suite": {"head_sha": "a" * 40}}, api))
+        self.assertEqual([], _event_pr_numbers("status", {"sha": "b" * 40}, api))
+
+    def test_quick_pr_obeys_every_merge_gate(self):
+        for name in REQUIRED_CHECKS:
+            for state in ("failure", "pending", "skipped"):
+                with self.subTest(name=name, state=state):
+                    api = FakeGitHub()
+                    api.make_quick_pr()
+                    if name in {"PR Review", "QA Agent"}:
+                        next(item for item in api.statuses if item["context"] == name)["state"] = state
+                    else:
+                        next(item for item in api.check_runs if item["name"] == name)["conclusion"] = state
+                    self.assertFalse(merge_if_ready(api, 43))
+                    self.assertFalse(api.merged)
+        api = FakeGitHub()
+        api.make_quick_pr()
+        api.comments = [{"body": "Please wait", "user": {"login": api.owner}}]
+        self.assertFalse(merge_if_ready(api, 43))
+        api.comments = []
+        api.statuses = [item for item in api.statuses if item["context"] != "QA Agent"]
+        self.assertFalse(merge_if_ready(api, 43))
+        api.check_runs.append({
+            "name": "QA Agent", "conclusion": "success", "completed_at": "2026-01-02T00:00:00Z",
+        })
+        self.assertFalse(merge_if_ready(api, 43))
+
     def test_merges_only_when_checks_statuses_and_comments_are_clear(self):
         api = FakeGitHub()
         with patch("copilot_agent_automation.subprocess.run") as run:
@@ -534,6 +659,8 @@ class AssignToCopilotQueryTest(unittest.TestCase):
             return []
 
         def request(self, method, path, body=None):
+            if method == "GET" and "/pulls/" in path:
+                return {}
             self.comments.append((path, body))
             return {}
 
@@ -582,6 +709,28 @@ class AssignToCopilotQueryTest(unittest.TestCase):
         self.assertIn("issue(number", lookup)
         self.assertNotIn("pullRequest(number", lookup)
         self.assertTrue(any("agent-automation-start:" in body["body"] for _, body in api.comments))
+
+    def test_quick_pr_dispatch_instructs_agent_to_use_pr_scope(self):
+        from copilot_agent_automation import assign_to_copilot
+
+        api = self.GraphQLGitHub()
+        quick_pr = FakeGitHub()
+        quick_pr.make_quick_pr()
+        original_request = api.request
+        api.request = lambda method, path, body=None: (
+            quick_pr.pr if method == "GET" and "/pulls/" in path
+            else original_request(method, path, body)
+        )
+        api.owner = quick_pr.owner
+        api.repository = quick_pr.repository
+        captured = []
+        original_graphql = api.graphql
+        api.graphql = lambda query, variables: (
+            captured.append(variables) or original_graphql(query, variables)
+        )
+        assign_to_copilot(api, Dispatch("pull", 43, "senior-qa-engineer", "a" * 40))
+        self.assertIn("no task issue", captured[-1]["instructions"])
+        self.assertIn("Do not edit or push code", captured[-1]["instructions"])
 
 
 if __name__ == "__main__":

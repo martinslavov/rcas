@@ -15,7 +15,7 @@ from typing import Callable, Mapping
 
 OWNER = "martinslavov"
 REPO = "martinslavov/rcas"
-ENTRY_LABEL = "agent-read"
+ENTRY_LABEL = "cloud-agent"
 SKIP_ARCHITECT_LABEL = "skip-architect"
 HUMAN_REVIEW_LABEL = "needs-human-review"
 SHIP_PR_MARKER = "<!-- ship-pr -->"
@@ -424,7 +424,7 @@ class Orchestrator:
         self.project_or_report(issue, target)
         return updated
 
-    def intake_pr_review(self, issue: int, pr_number: int, enable_agent_read: bool, dry_run: bool) -> dict:
+    def intake_pr_review(self, issue: int, pr_number: int, enable_cloud_agent: bool, dry_run: bool) -> dict:
         if issue < 1 or pr_number < 1:
             raise OrchestratorError("issue and PR numbers must be positive")
 
@@ -444,7 +444,7 @@ class Orchestrator:
         )
         if SHIP_PR_MARKER not in body or not closes_issue:
             raise OrchestratorError(
-                f"PR #{pr_number} must have been created by /ship-pr and close issue #{issue}"
+                f"PR #{pr_number} must have been created by /create-pr-cloud and close issue #{issue}"
             )
         head_sha = (pr.get("head") or {}).get("sha")
         if not isinstance(head_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", head_sha):
@@ -479,7 +479,7 @@ class Orchestrator:
                 "gh", "api", "-X", "DELETE",
                 f"repos/{REPO}/issues/{issue}/labels/{ENTRY_LABEL}",
             )
-        if enable_agent_read and ENTRY_LABEL not in pr_labels:
+        if enable_cloud_agent and ENTRY_LABEL not in pr_labels:
             self.call(
                 "gh", "api", "-X", "POST", f"repos/{REPO}/issues/{pr_number}/labels",
                 "-f", f"labels[]={ENTRY_LABEL}",
@@ -512,11 +512,11 @@ def build_parser() -> argparse.ArgumentParser:
     transition_parser.add_argument("--dry-run", action="store_true")
     intake_parser = subparsers.add_parser(
         "intake-pr-review",
-        help="record a /ship-pr handoff to PR Review without broadening normal transitions",
+        help="record a /create-pr-cloud handoff to PR Review without broadening normal transitions",
     )
     intake_parser.add_argument("issue", type=issue_number)
     intake_parser.add_argument("--pr", required=True, type=issue_number)
-    intake_parser.add_argument("--agent-read", action="store_true")
+    intake_parser.add_argument("--cloud-agent", action="store_true")
     intake_parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -532,7 +532,7 @@ def main(argv: list[str] | None = None, runner: Callable[[list[str]], str] = _su
         elif args.command == "reconcile":
             record = orchestrator.reconcile(args.issue)
         elif args.command == "intake-pr-review":
-            record = orchestrator.intake_pr_review(args.issue, args.pr, args.agent_read, args.dry_run)
+            record = orchestrator.intake_pr_review(args.issue, args.pr, args.cloud_agent, args.dry_run)
         else:
             record = orchestrator.transition(args.issue, args.to, args.agent, args.head_sha, args.dry_run)
         print(json.dumps(record, indent=2, sort_keys=True))

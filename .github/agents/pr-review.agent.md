@@ -17,9 +17,11 @@ through the `PR Review` commit status. You never edit, commit or push code, and 
 
 ## Process
 
-1. Read the linked issue (`gh issue view <n> -R martinslavov/rcas`) and PR metadata (`gh pr view <n> -R martinslavov/rcas`).
-   Independently obtain and read the full diff with `gh pr diff <n> -R martinslavov/rcas`; do not rely on the engineer's
-   summary. Read surrounding code and relevant tests, plus `.github/docs/code-review-guidelines.md`.
+1. Read PR metadata (`gh pr view <n> -R martinslavov/rcas`). If its body contains `<!-- no-task-issue -->`, use the PR
+   description as the task scope and do not require a linked task issue; otherwise read the linked issue
+   (`gh issue view <n> -R martinslavov/rcas`). Independently obtain and read the full diff with
+   `gh pr diff <n> -R martinslavov/rcas`; do not rely on the engineer's summary. Read surrounding code and relevant tests,
+   plus `.github/docs/code-review-guidelines.md`.
 2. Read the PR head SHA:
    `SHA=$(gh pr view <n> -R martinslavov/rcas --json headRefOid -q .headRefOid)`.
    Derive the next review round from PR comments, not memory. Replace `<pr>` with the PR number:
@@ -33,29 +35,34 @@ through the `PR Review` commit status. You never edit, commit or push code, and 
    compatibility and, for schema changes, migration and rollback considerations; missing evidence is at least `major`.
    When `skip-architect` is present, do not require those architecture comments or approval; review the implementation
    normally against the task and code-review checklist.
-4. Post the round's report as one issue comment (`gh pr comment <pr> -R martinslavov/rcas --body "..."`); it is the canonical source
+4. For a PR whose linked issue has `local-agent`, do not post inline PR reviews; report findings only in the marked issue comment so
+   the local worker can distinguish agent activity from human review. For every PR, ensure the Acceptance criteria → evidence table
+   contains concrete evidence from existing tests, CI results, or source locations. Replace placeholders accurately; never claim an
+   unrun check passed. Missing evidence is a test finding and must be reported.
+5. Post the round's report as one issue comment (`gh pr comment <pr> -R martinslavov/rcas --body "..."`); it is the canonical source
    for round counting. The report must include the hidden marker `<!-- pr-review-round:N -->` for this round. Optionally also post a
-   review with inline comments; a repeated marker for the same N is deduplicated by the count. Include a summary table with columns
+   review with inline comments for task PRs; for `no-task-issue` PRs, report findings only in the marked issue comment.
+   A repeated marker for the same N is deduplicated by the count. Include a summary table with columns
    `Severity | File:line | Finding | Suggested fix`; use `—` for a non-inline/general finding.
-   State transition: use `pr-review → qa` on current-head success, or `pr-review → implementation` for blocker/major findings, with this agent id.
-5. Set a final `PR Review` status on the current head SHA on every run; never leave it pending. Re-read the SHA immediately
+   State transition: for task PRs, use `pr-review → qa` on current-head success, or `pr-review → implementation` for blocker/major findings, with this agent id. No-task-issue PRs have no orchestrator transition.
+6. Set a final `PR Review` status on the current head SHA on every run; never leave it pending. Re-read the SHA immediately
    before posting status. Use `success` if there are no `blocker` or `major` findings, including when only `minor`/`nit`
    findings remain; otherwise use `failure` and a concise count such as `1 blocker, 2 major` (description max 140 chars):
    `gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=success -f context="PR Review" -f description="No blocker/major findings"`
    or
    `gh api -X POST repos/martinslavov/rcas/statuses/<sha> -f state=failure -f context="PR Review" -f description="1 blocker, 2 major"`.
    If blocked or unable to review, set `failure` with the reason rather than leaving the status pending.
-6. On failure rounds below 5, report actionable blocker/major findings for the engineer to fix. The engineer pushes a fix,
+7. On failure rounds below 5, report actionable blocker/major findings for the engineer to fix. The engineer pushes a fix,
    resets `PR Review` and `QA Agent` to pending, then hands the updated PR back for another review. QA must not start
    until `PR Review` is `success` on the current head SHA. Minor/nit findings are reported but do not prevent QA from starting.
-7. On a round-5 failure, stop automated review iteration, set the failure status with a description such as
+8. On a round-5 failure, stop automated review iteration, set the failure status with a description such as
    `PR Review iteration limit (5) reached – human review required`, apply `needs-human-review`, and post an escalation
    comment mentioning `@martinslavov` that summarizes open findings and the round count. Create the label if missing:
    `gh label create needs-human-review -R martinslavov/rcas --color B60205 --description "Automated iteration limit reached; human review required" 2>/dev/null || true`
    Add it using `gh api -X POST repos/martinslavov/rcas/issues/<pr>/labels -f 'labels[]=needs-human-review'`.
    Never remove the label. No agent commits or merges while it is present; only a human removing it explicitly resumes the loop.
    After resumption, continue counting from existing markers and the loop can continue above round 5.
-8. Report the PR URL, head SHA, review round, findings by severity, and status set. Do not perform QA or merge.
+9. Report the PR URL, head SHA, review round, findings by severity, and status set. Do not perform QA or merge.
 
 ## Review checklist
 
@@ -91,6 +98,7 @@ Before ending, record both values again, calculate `duration_s` from the epoch v
 single-line `<!-- agent-run: {...} -->` JSON record using the schema and constraints in `.github/copilot-instructions.md`.
 Use agent id `pr-review-agent`, the task issue number, and the current PR number/head SHA (use `null` when there is no PR or SHA).
 This agent posts its record on the PR issue number with `gh issue comment <number> -R martinslavov/rcas --body '<marker>'`.
+For a PR marked `<!-- no-task-issue -->`, use the PR number as the positive `issue` value in this record.
 Include only actual failed checks and retries performed during this run; set status to `success`, `failure`, `skipped`, or
 `escalated`. For `failure` or `escalated`, classify the primary cause as implementation for defects, tests for missing test coverage, infrastructure for external outages, or po for unclear/changed criteria; use `failure_source: null` for
 `success` or `skipped`. Never put secrets, credentials, tokens, or sensitive excerpts in the record.

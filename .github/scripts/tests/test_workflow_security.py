@@ -80,6 +80,13 @@ class WorkflowSecurityTest(unittest.TestCase):
         self.assertNotIn("shell=True", helper)
         self.assertNotIn("os.system", helper)
 
+    def test_quick_prs_with_no_task_issue_skip_tracking_issue_creation(self):
+        text = (ROOT / "workflows" / "ci-pr-issue-tracking.yml").read_text(encoding="utf-8")
+        job = _jobs(text)["create-issue"]
+
+        self.assertIn("<!-- no-task-issue -->", job)
+        self.assertIn("!contains(github.event.pull_request.body", job)
+
     def test_cloud_pr_creation_if_expression_uses_single_quoted_literals(self):
         text = (ROOT / "workflows" / "ci-agent-pr-creation.yml").read_text(encoding="utf-8")
         expressions = re.findall(r"(?m)^\s+if:\s*(.+)$", text)

@@ -18,7 +18,8 @@ from typing import Any, Callable
 API_ROOT = "https://api.github.com"
 API_VERSION = "2022-11-28"
 REPOSITORY = "martinslavov/rcas"
-ENTRY_LABEL = "agent-read"
+ENTRY_LABEL = "cloud-agent"
+LOCAL_AGENT_LABEL = "local-agent"
 BACKLOG_LABEL = "backlog"
 APPROVAL_LABEL = "architecture-approval-required"
 SKIP_ARCHITECT_LABEL = "skip-architect"
@@ -102,6 +103,7 @@ def _issue_is_ready(api: GitHubApi, issue: dict[str, Any], comments: list[dict[s
         not isinstance(issue_number, int)
         or "pull_request" in issue
         or issue.get("state") != "open"
+        or LOCAL_AGENT_LABEL in issue_labels
         or HUMAN_REVIEW_LABEL in issue_labels
         or BACKLOG_LABEL in issue_labels
     ):
@@ -344,7 +346,7 @@ def _run_intake(issue_number: int, pr_number: int, root: Path,
         str(issue_number),
         "--pr",
         str(pr_number),
-        "--agent-read",
+        "--cloud-agent",
     ]
     environment = os.environ.copy()
     environment.pop("COPILOT_AGENT_TOKEN", None)

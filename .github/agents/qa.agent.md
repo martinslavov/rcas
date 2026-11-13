@@ -23,11 +23,14 @@ You do not change production code; you may add or improve tests. PR Review is a 
 
 1. Start QA only after `PR Review` is `success` on the current PR head SHA. If it is pending, failed, or not successful
    for the current SHA, do not review or test yet; report the prerequisite and do not set `QA Agent` to success.
-   Read the issue (`gh issue view <n> -R martinslavov/rcas`) and the PR (`gh pr view <n> -R martinslavov/rcas`,
-   `gh pr diff <n> -R martinslavov/rcas`). Get the head SHA:
+   Read the PR (`gh pr view <n> -R martinslavov/rcas`, `gh pr diff <n> -R martinslavov/rcas`). If the PR body contains
+   `<!-- no-task-issue -->`, use its description as the scope and do not require a task issue; otherwise read the linked
+   issue (`gh issue view <n> -R martinslavov/rcas`). Get the head SHA:
    `SHA=$(gh pr view <n> -R martinslavov/rcas --json headRefOid -q .headRefOid)`.
-2. Check the tests against every acceptance criterion and the edge cases above. Add missing tests (commit and push them
-   to the PR branch; a push resets the status to `pending`, so re-read the head SHA afterwards).
+2. Check the tests against every acceptance criterion and the edge cases above. Add missing tests and push them to the PR
+   branch in the normal flow; a push resets the status to `pending`, so re-read the head SHA afterwards. When invoked by
+   `.github/scripts/local_agent_worker.py` or for a PR marked `<!-- no-task-issue -->`, QA is verification-only: do not edit or push files; report missing tests for
+   the Engineer to implement so the worker can restart review on the new head.
 3. Apply the QA test-scope rules below to the changed paths, then run the required checks with JDK 25. Report only
    checks actually executed and their results in the `QA Agent` status description.
 4. For each QA failure, derive the round from comments on this PR, not agent memory. Replace `<pr>` with the PR number:
@@ -48,7 +51,8 @@ You do not change production code; you may add or improve tests. PR Review is a 
    rounds (`<!-- pr-review-round:N -->`). Either a QA limit or CI stop uses the same label. While it is present no agent
    commits or merges; automated agents never remove it. After human removal, retain all counters and continue above
    their numeric limits, but the CI repeated-signature early stop still applies.
-   State transition: use `qa → merge` on success or `qa → implementation` on failure, with this agent id.
+   For task PRs, state transition: use `qa → merge` on success or `qa → implementation` on failure, with this agent id.
+   No-task-issue PRs have no orchestrator transition.
 7. Set the final status on the **current** head SHA. You MUST always set a final status (`success` or `failure`); never
    leave it `pending`, also not when a command fails or you are blocked (use `failure` with the reason).
    - QA passed and no findings remain unresolved:
@@ -78,6 +82,7 @@ Before ending, record both values again, calculate `duration_s` from the epoch v
 single-line `<!-- agent-run: {...} -->` JSON record using the schema and constraints in `.github/copilot-instructions.md`.
 Use agent id `senior-qa-engineer`, the task issue number, and the current PR number/head SHA (use `null` when there is no PR or SHA).
 This agent posts its record on the PR issue number with `gh issue comment <number> -R martinslavov/rcas --body '<marker>'`.
+For a PR marked `<!-- no-task-issue -->`, use the PR number as the positive `issue` value in this record.
 Include only actual failed checks and retries performed during this run; set status to `success`, `failure`, `skipped`, or
 `escalated`. For `failure` or `escalated`, classify the primary cause as tests for failing/missing tests, implementation for code defects, infrastructure for external outages, or po for unclear/changed criteria; use `failure_source: null` for
 `success` or `skipped`. Never put secrets, credentials, tokens, or sensitive excerpts in the record.

@@ -264,7 +264,7 @@ class OrchestratorStateMachineTests(unittest.TestCase):
             if endpoint == "repos/martinslavov/rcas/issues/101/comments":
                 return "\n".join(json.dumps(comment) for comment in comments)
             if endpoint == "repos/martinslavov/rcas/issues/101/labels":
-                return "state:implementation\nagent-read"
+                return "state:implementation\ncloud-agent"
             return ""
 
         updated = Orchestrator(runner).intake_pr_review(101, 202, True, False)
@@ -310,11 +310,11 @@ class OrchestratorStateMachineTests(unittest.TestCase):
                 return json.dumps({"id": 987, "body": serialize_record(record), "author": "x"})
             return ""
 
-        with self.assertRaisesRegex(OrchestratorError, "created by /ship-pr"):
+        with self.assertRaisesRegex(OrchestratorError, "created by /create-pr-cloud"):
             Orchestrator(runner).intake_pr_review(101, 202, True, False)
         self.assertFalse(any("-X" in call for call in calls))
 
-    def test_ship_pr_intake_without_agent_read_does_not_opt_into_automation(self):
+    def test_ship_pr_intake_without_cloud_agent_does_not_opt_into_automation(self):
         record = self.record("todo")
         comments = [{"id": 987, "body": serialize_record(record), "author": "x"}]
         issue = {"number": 101, "state": "open", "labels": []}

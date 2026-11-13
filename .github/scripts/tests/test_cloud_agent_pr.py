@@ -20,7 +20,7 @@ class FakeGitHubApi:
             "title": "Cloud flow",
             "state": "open",
             "labels": [
-                {"name": "agent-read"},
+                {"name": "cloud-agent"},
                 {"name": "architecture-approval-required"},
             ],
         }
@@ -64,8 +64,8 @@ class FakeGitHubApi:
         }]
 
     def pages(self, path):
-        if (path.startswith("/repos/martinslavov/rcas/issues?state=open&labels=agent-read")
-                and any(label["name"] == "agent-read" for label in self.issue["labels"])):
+        if (path.startswith("/repos/martinslavov/rcas/issues?state=open&labels=cloud-agent")
+                and any(label["name"] == "cloud-agent" for label in self.issue["labels"])):
             return [self.issue]
         if (path.startswith("/repos/martinslavov/rcas/issues?state=open&labels=state%3Apr-review")
                 and any(label["name"] == "state:pr-review" for label in self.issue["labels"])):
@@ -167,7 +167,7 @@ class CloudAgentPrTest(unittest.TestCase):
         self.assertIn("# Acceptance criteria → evidence", body)
         self.assertEqual(1, len(self.calls))
         command = self.calls[0][0]
-        self.assertEqual(["intake-pr-review", "42", "--pr", "43", "--agent-read"], command[-5:])
+        self.assertEqual(["intake-pr-review", "42", "--pr", "43", "--cloud-agent"], command[-5:])
         self.assertEqual("test-token", self.calls[0][1]["env"]["GH_TOKEN"])
         self.assertNotIn("COPILOT_AGENT_TOKEN", self.calls[0][1]["env"])
         self.assertTrue(any("cloud-agent-pr-authorized:" in comment["body"] for comment in self.api.comments))
@@ -180,7 +180,7 @@ class CloudAgentPrTest(unittest.TestCase):
                 state.update({"state": "pr-review", "owner_agent": "pr-review-agent", "head_sha": SHA,
                               "actions": {"ship_pr_intake": {"pr": 43, "head_sha": SHA}}})
                 self.api.comments[0]["body"] = "<!-- task-state: " + json.dumps(state) + " -->"
-                self.api.issue["labels"] = [label for label in self.api.issue["labels"] if label["name"] != "agent-read"]
+                self.api.issue["labels"] = [label for label in self.api.issue["labels"] if label["name"] != "cloud-agent"]
                 self.api.issue["labels"].append({"name": "state:pr-review"})
                 return subprocess.CompletedProcess(command, 1, "", "retry")
             return subprocess.CompletedProcess(command, 0, "", "")
@@ -203,7 +203,7 @@ class CloudAgentPrTest(unittest.TestCase):
     def created_prs(self, api):
         return [r for r in api.requests if r[0] == "POST" and r[1] == "/repos/martinslavov/rcas/pulls"]
 
-    def test_schedule_alone_discovers_fresh_push_and_creates_exactly_one_pr(self):
+    def test_schedule_discovers_fresh_push_and_creates_exactly_one_pr(self):
         self.assertFalse(any("cloud-agent-pr-authorized:" in c["body"] for c in self.api.comments))
 
         _, result = self.run_schedule()
@@ -211,7 +211,7 @@ class CloudAgentPrTest(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(1, len(self.created_prs(self.api)))
         self.assertEqual(1, len(self.calls))
-        self.assertEqual(["intake-pr-review", "42", "--pr", "43", "--agent-read"], self.calls[0][0][-5:])
+        self.assertEqual(["intake-pr-review", "42", "--pr", "43", "--cloud-agent"], self.calls[0][0][-5:])
         self.assertNotIn("COPILOT_AGENT_TOKEN", self.calls[0][1]["env"])
         self.run_schedule()
         self.assertEqual(1, len(self.created_prs(self.api)))
@@ -312,6 +312,9 @@ class CloudAgentPrTest(unittest.TestCase):
         no_label = FakeGitHubApi()
         no_label.issue["labels"] = []
         cases.append((no_label, self.event))
+        both_worker_labels = FakeGitHubApi()
+        both_worker_labels.issue["labels"].append({"name": "local-agent"})
+        cases.append((both_worker_labels, self.event))
         non_feature = dict(self.event, ref="refs/heads/topic/42-cloud-flow")
         cases.append((FakeGitHubApi(), non_feature))
         unexpected = dict(self.event, sender={"login": "martinslavov", "id": 99})

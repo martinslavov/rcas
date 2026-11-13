@@ -20,10 +20,10 @@ PostgreSQL over R2DBC). You turn a raw request into a clear, small, testable bac
 
 1. Pipe the original task text to `python3 .github/scripts/task_input.py` and use its JSON output as the contract. The canonical
    format starts with `TASK-NAME:<name>`, optionally followed by `DEVELOPMENT: low|medium|high` and
-   `TAG: agent-read,skip-architect,skip-product-owner` (any supported subset), then a `DESCRIPTION: <text>` line or
+   `TAG: cloud-agent,local-agent,skip-architect,skip-product-owner` (any supported subset), then a `DESCRIPTION: <text>` line or
    free-form description. `DEVELOPMENT` is optional and becomes the `development:<level>` issue label.
    `LABEL:BACKLOG,TASK-NAME:<name>` (`LABEL:` is case-insensitive) remains supported and may include the same metadata.
-   For backward compatibility, a first-line `TAG: agent-read` followed by a task-name line remains accepted. The parser
+   For backward compatibility, a first-line `TAG: cloud-agent` followed by a task-name line remains accepted. The parser
    rejects unsupported labels and development levels. Use only the parsed task name and description as issue content;
    never copy control lines into the title or body. Read the relevant parts of the repository to understand the current behavior.
    If `skip-product-owner` is present, do not analyze or create the issue; report the opt-out and return control to the caller.
@@ -38,15 +38,20 @@ PostgreSQL over R2DBC). You turn a raw request into a clear, small, testable bac
    - Body sections: `### Type` (Bug / Enhancement / Documentation / Task), `### Description`,
      `### Current behavior / steps to reproduce` (`NA` if not applicable), `### Acceptance criteria` (checklist),
      `### Out of scope`, `### Notes` (risks, dependencies, hints for the implementer).
-   - Add every label returned by the parser when creating the issue, including `agent-read` for the opt-in cloud flow,
+   - Add every label returned by the parser when creating the issue, including `cloud-agent` for the opt-in cloud flow,
+     `local-agent` for the opt-in local worker flow (never combine them),
      `skip-architect` and `skip-product-owner` for the requested role opt-outs, `development:<level>` when supplied, and
      `backlog` for the existing backlog contract. The backlog label must be set at creation; do not set project fields: the
      `CI Issue Board` workflow puts the issue on the board as `Backlog` (with the label) or `TODO` (without it). An input
-     combining `agent-read` and `backlog` remains in Backlog and does not start cloud processing until a human moves it to TODO.
+     combining `cloud-agent` and `backlog` remains in Backlog and does not start cloud processing until a human moves it to TODO.
+     Before creating a `cloud-agent` issue, ensure that repository label exists with
+     `gh label create cloud-agent -R martinslavov/rcas --color 1D76DB --description "Run the Copilot cloud agent workflow" --force`.
+     Before creating a `local-agent` issue, ensure that repository label exists with
+     `gh label create local-agent -R martinslavov/rcas --color 1D76DB --description "Run the local Copilot agent worker" --force`.
 5. Note whether the issue may affect architecture, database schema/migrations, messaging, public HTTP APIs or security so
    the Architect can evaluate the approval triggers. Do not treat this assessment as design approval or skip the Architect.
 6. Return to the caller: the issue number and URL, whether it is a backlog item, the branch name and a 2-3 line summary
-   of the acceptance criteria. For `agent-read` issues, use `feature/<issue-number>-<task-name-slug>` so the hardened PR
+   of the acceptance criteria. For `cloud-agent` issues, use `feature/<issue-number>-<task-name-slug>` so the hardened PR
    workflow can validate the branch-to-issue association; for local tasks retain `feature/<task-name>`. Derive a short
    lowercase slug with `-` when the name is free text.
 

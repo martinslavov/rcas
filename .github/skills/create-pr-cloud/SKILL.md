@@ -1,23 +1,23 @@
 ---
-name: ship-pr
-description: Ship the current work end to end - ensure a task issue exists, commit, push, create a PR, run PR Review and QA, then merge when every gate succeeds on the current head SHA. Optional arguments add PR labels; with `agent-read` it hands review to automation. Use when the user runs /ship-pr [labels] or asks to ship, finish or merge the current change.
+name: create-pr-cloud
+description: Create a task-linked PR and hand it to cloud automation for PR Review, QA, bounded fixes and gated automatic merge.
 ---
 
-# Ship PR
+# Create PR with cloud automation
 
 Run the delivery pipeline for the change in the working tree. The main agent only coordinates; reviews are done by the
 custom agents. Repository: `martinslavov/rcas`. Record `date +%s` at the start for the elapsed time.
 
 ## Arguments
 
-`/ship-pr [label[,label...]]` - optional extra PR labels, separated by commas or spaces.
+`/create-pr-cloud [label[,label...]]` - optional extra PR labels, separated by commas or spaces.
 
 - No arguments: only the default labels (type `bug`/`documentation`/`enhancement` and impact `minor`/`major`).
 - With arguments: default labels plus the given ones. A label that does not exist is reported to the user, never created silently.
 - `needs-human-review` is refused as an argument; only a human applies or removes it.
-- **`agent-read` mode.** For a local/manual handoff, if `agent-read` is among the arguments, the automation (Copilot dispatch
-  → PR Review → QA and auto-merge) owns the review pipeline. Create or reuse the task issue and `/ship-pr` PR, then run
-  `orchestrator.py intake-pr-review <issue> --pr <pr> --agent-read`. For cloud issues created from `TAG: agent-read`, do not
+- **Cloud handoff is the default.** The automation (Copilot dispatch → PR Review → QA and auto-merge) owns the review pipeline.
+  Create or reuse the task issue and marked PR, then run
+  `orchestrator.py intake-pr-review <issue> --pr <pr> --cloud-agent`. For cloud issues created from `TAG: cloud-agent`, do not
   invoke this skill after the Engineer push: the guarded five-minute cloud workflow creates/reuses the PR and runs the same
   intake. In either path do not set status gates, invoke review/QA agents, or merge; report that automation continues. See
   `.github/docs/agent-automation.md`.
@@ -32,7 +32,7 @@ custom agents. Repository: `martinslavov/rcas`. Record `date +%s` at the start f
 - If continuing an Engineer handoff, check out the exact branch the Engineer pushed before running the skill; do not create a
   second branch for the same implementation.
 - **Issue first.** Reuse the task issue explicitly associated with the work. If none is identified, create one before creating
-  the PR, using the normal issue template and Product Owner-style acceptance criteria. Do not add `agent-read` or `backlog`
+  the PR, using the normal issue template and Product Owner-style acceptance criteria. Do not add `cloud-agent` or `backlog`
   to an issue created by this skill.
 - **PR creation is through this skill.** If an open PR exists for the branch and its body lacks `<!-- ship-pr -->`, stop:
   do not adopt, relabel, or rewrite a PR created outside this skill. Reuse an existing PR only when it already has that marker.
@@ -46,6 +46,9 @@ custom agents. Repository: `martinslavov/rcas`. Record `date +%s` at the start f
 - Never stage secrets or unrelated files; review `git status` and `git diff --stat` before committing.
 - Never merge when any gate is pending, failed, skipped or unknown, when `needs-human-review` is present, or when human
   comments or unresolved blocker/major findings remain. Never bypass the orchestrator or branch protection.
+- If the user asks to keep the PR open, do not opt it into cloud automation: create or reuse the PR without cloud intake
+  and report that review, QA and merge were not started. If the PR is already cloud-opted-in, stop and report that its
+  automation is already active; do not claim it will remain open.
 - PR descriptions must not contain review, QA or check-status claims; the testing section lists only commands actually run.
 
 ## Steps
@@ -55,43 +58,27 @@ custom agents. Repository: `martinslavov/rcas`. Record `date +%s` at the start f
 2. **Push.** `git push -u origin <branch>`.
 3. **Task issue.** If there is no task issue explicitly identified for this work, delegate the task summary and relevant
    change context to `product-owner-agent` to check for duplicates and create the issue using `.github/ISSUE_TEMPLATE/issue.yml`.
-   Keep the issue in TODO (no `backlog` label) and do not add `agent-read`. Because this code is already implemented, this
-   intake does not dispatch Architect or Engineer; `/ship-pr agent-read` enters at PR Review, as the user explicitly chose.
+   Keep the issue in TODO (no `backlog` label) and do not add `cloud-agent`. Because this code is already implemented, this
+   intake does not dispatch Architect or Engineer; `/create-pr-cloud` enters at PR Review.
    Store the issue number as `<issue>`.
 4. **Pull request.** If no marked open PR exists for the branch, create one with
    `gh pr create -R martinslavov/rcas --base main --assignee @me` and a body built from
    `.github/PULL_REQUEST_TEMPLATE/pull_request_template.md` (keep headings, comments, checklist items, and order; include
    `Closes #<issue>`, local test commands with results, the acceptance criteria table, and `<!-- ship-pr -->`).
-   Add the labels the template asks for (type and impact) plus any labels passed as arguments except `agent-read`, which the
+   Add the labels the template asks for (type and impact) plus any labels passed as arguments except `cloud-agent`, which the
    intake command adds only after recording the task state. Store the PR number as `<pr>`.
-5. **Record PR Review intake.** Check the issue's task-state record with
+5. **Record PR Review intake.** If the user asked to keep the PR open, stop here without intake or `cloud-agent`; report
+   the issue and PR links. Otherwise check the issue's task-state record with
    `python3 .github/scripts/orchestrator.py state <issue>`. If the Issue Board workflow has not seeded it yet, wait for that
    workflow. If it has completed but the record is still missing, seed only the initial state with
    `python3 .github/scripts/orchestrator.py init <issue> --state todo --agent human`; if that reports an existing record,
    re-read the state instead of overwriting it. Then run
-   `python3 .github/scripts/orchestrator.py intake-pr-review <issue> --pr <pr>`; add `--agent-read` only when that label was
-   passed as a `/ship-pr` argument. This records the PR head SHA and automation start marker and removes issue-level
-   `agent-read` after a completed implementation. If the command fails, stop and report the error; do not bypass the
+   `python3 .github/scripts/orchestrator.py intake-pr-review <issue> --pr <pr> --cloud-agent`. This records the PR head SHA and automation start marker and removes issue-level
+   `cloud-agent` after a completed implementation. If the command fails, stop and report the error; do not bypass the
    orchestrator or add labels manually.
-6. **Agent-read handoff.** If `agent-read` was requested, stop here: the intake command adds the label to the PR, which starts
-   PR Review. Do not reset gates, invoke review/QA agents, or merge.
-7. **Reset gates.** For the manual-review path, set `PR Review` and `QA Agent` to `pending` on the head SHA
-   (`gh pr view <number> -R martinslavov/rcas --json headRefOid -q .headRefOid`) as described in the pull request rules of
-   `.github/copilot-instructions.md`.
-8. **PR Review.** Delegate to `pr-review-agent`: `Review PR #<pr> in martinslavov/rcas.`
-9. **Wait for `PR Review`** to be `success` on the current head SHA
-   (`gh api repos/martinslavov/rcas/commits/<sha>/status --jq '.statuses[] | select(.context=="PR Review") | .state'`),
-   polling every 30-60 seconds. On `failure` with blocker/major findings: fix them (delegate to
-   `senior-java-software-engineer` if the fix is non-trivial), commit, push, and restart at step 7. The head SHA may change
-   after a push; always compare against the current one.
-10. **QA.** Delegate to `senior-qa-engineer`: `Run QA for PR #<pr> in martinslavov/rcas.` Wait for `QA Agent` = `success`.
-   On failure fix and restart from step 7.
-11. **Merge.** Verify with `gh pr checks <pr> -R martinslavov/rcas` that every required check and the `PR Review` and `QA Agent` statuses
-   are `success` on the current head SHA, and that
-   `gh api repos/martinslavov/rcas/issues/<pr>/labels -q '.[].name | select(. == "needs-human-review")'` is empty.
-   Then `gh pr merge <pr> -R martinslavov/rcas --merge --delete-branch`.
-12. **Report.** Give the task issue and PR links, merge status and total elapsed time. Record elapsed time with
-    `.github/scripts/post_task_elapsed.sh <issue> <pr> <start-epoch>`.
+6. **Cloud-agent handoff.** Stop here: intake adds the label and cloud automation starts PR Review, then QA, bounded fix
+   loops and automatic merge when all gates pass. Do not reset gates, invoke review/QA agents, or merge locally.
+   Report the issue and PR links and that the handoff is pending; do not claim a merge has happened.
 
 ## Loop limits
 

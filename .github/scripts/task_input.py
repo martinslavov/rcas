@@ -25,7 +25,7 @@ DEVELOPMENT_LINE = re.compile(r"^DEVELOPMENT:\s*(low|medium|high)\s*$", re.IGNOR
 TASK_LINE = re.compile(r"^TASK-NAME:\s*(.*?)\s*$")
 BACKLOG_TASK_LINE = re.compile(r"^LABEL:BACKLOG,TASK-NAME:\s*(.*?)\s*$", re.IGNORECASE)
 DESCRIPTION_PREFIX = re.compile(r"^DESCRIPTION:[ \t]*")
-SUPPORTED_TAGS = frozenset({"agent-read", "skip-architect", "skip-product-owner"})
+SUPPORTED_TAGS = frozenset({"cloud-agent", "local-agent", "skip-architect", "skip-product-owner"})
 
 
 def parse_task_input(text: str) -> TaskInput:
@@ -80,7 +80,9 @@ def parse_task_input(text: str) -> TaskInput:
     description = DESCRIPTION_PREFIX.sub("", description, count=1)
     if development is not None:
         labels.append(f"development:{development}")
-    ordered = ("agent-read", "skip-architect", "skip-product-owner", "backlog")
+    if "cloud-agent" in labels and "local-agent" in labels:
+        raise TaskInputError("cloud-agent and local-agent are mutually exclusive")
+    ordered = ("cloud-agent", "local-agent", "skip-architect", "skip-product-owner", "backlog")
     ordered_labels = tuple(label for label in ordered if label in labels)
     if development is not None:
         ordered_labels += (f"development:{development}",)
