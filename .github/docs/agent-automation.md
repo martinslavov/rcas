@@ -108,8 +108,12 @@ python3 .github/scripts/local_agent_worker.py --workers 2
 ```
 
 The default polls every 60 seconds and processes one task at a time; `--workers N` runs independent issues concurrently.
-Use `Ctrl+C` to stop it. A repository-local file lock prevents a second worker process from taking the same queue. Each task
+Use `Ctrl+C` to stop it. Multiple worker processes can run simultaneously from the same Git repository. Per-issue locks
+in the shared Git directory prevent them from processing the same issue at once; a busy issue is skipped without prompting.
+Locks are released when processing ends or a process exits. Separate clones do not share these locks. Each task
 has a dedicated worktree under `../rcas-sessions/` and named Copilot CLI sessions for Architect, Engineer, PR Review and QA.
+For a new task, the worker creates the worktree from the freshly fetched `origin/main` before starting Architect or
+Engineer. Existing task worktrees and branches are reused when resuming, including after an approval wait.
 If the Mac sleeps or is off, the queue waits; restarting the command resumes from the issue's recorded state, branch and PR.
 No Copilot model is invoked while the queue is empty; eligible tasks consume normal Copilot CLI usage.
 

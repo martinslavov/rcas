@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -51,12 +53,16 @@ class LocalAgentWorkerTest(unittest.TestCase):
         ]
         comments = [{"body": '<!-- task-state: {"issue": 21, "state": "todo"} -->'}]
         with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(worker, "lock_directory", return_value=Path(directory)),
             patch("local_agent_worker._run", return_value=json.dumps(issues)),
-            patch.object(worker, "issue_details", return_value=({}, comments)) as details,
+            patch.object(worker, "issue_details", return_value=(
+                {**issues[1], "user": issues[1]["author"], "state": "open"}, comments,
+            )) as details,
             patch.object(worker, "run_issue") as run_issue,
         ):
             self.assertTrue(worker.process_once())
-        details.assert_called_once_with(21)
+        details.assert_called_once_with(21, require_eligible=False)
         run_issue.assert_called_once_with(21)
 
     def test_pr_creation_in_worktree_cleans_up_temporary_body(self):
@@ -125,6 +131,27 @@ class LocalAgentWorkerTest(unittest.TestCase):
         self.assertIn("Do not post inline PR reviews", review)
         self.assertIn("verification-only local-worker run", qa)
         self.assertIn("do not edit files or push", qa)
+        self.assertIn("do not switch branches or create another branch or worktree", review)
+
+    def test_queue_results_are_eligible_for_processing(self):
+        worker = LocalAgentWorker(Path.cwd(), poll_seconds=60, max_rounds=5)
+        worker.owner = "martinslavov"
+        issue = {
+            "number": 41, "title": "Task", "createdAt": "2026-01-01",
+            "author": {"login": "martinslavov"}, "labels": [{"name": "local-agent"}],
+        }
+        comments = [{"body": '<!-- task-state: {"issue": 41, "state": "todo"} -->'}]
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(worker, "lock_directory", return_value=Path(directory)),
+            patch("local_agent_worker._run", return_value=json.dumps([issue])),
+            patch.object(worker, "issue_details", return_value=(
+                {**issue, "state": "open", "user": issue["author"]}, comments,
+            )),
+            patch.object(worker, "run_issue") as run_issue,
+        ):
+            self.assertTrue(worker.process_once())
+            run_issue.assert_called_once_with(41)
 
     def test_skip_architect_hands_todo_directly_to_engineer(self):
         worker = LocalAgentWorker(Path.cwd(), poll_seconds=60, max_rounds=5)
@@ -134,7 +161,9 @@ class LocalAgentWorkerTest(unittest.TestCase):
             patch.object(worker, "run_agent") as run_agent,
             patch.object(worker, "orchestrator", return_value={"state": "implementation"}) as orchestrator,
         ):
-            result = worker.advance_to_implementation(issue, labels, [], {"state": "todo"}, "session")
+            result = worker.advance_to_implementation(
+                issue, labels, [], {"state": "todo"}, "session", Path("/tmp/worktree"),
+            )
 
         self.assertEqual("implementation", result["state"])
         orchestrator.assert_called_once_with(
@@ -172,6 +201,120 @@ class LocalAgentWorkerTest(unittest.TestCase):
         self.assertEqual(worktree, run_agent.call_args.args[2])
         self.assertEqual((issue, 77, worktree, "issue-41", 123), finish_pr.call_args.args[:5])
         self.assertEqual("pr-review", finish_pr.call_args.args[-1])
+
+    def test_creates_worktree_before_architecture_and_runs_architect_there(self):
+        worker = LocalAgentWorker(Path.cwd(), poll_seconds=60, max_rounds=5)
+        issue = {"number": 41, "title": "test", "labels": [{"name": "local-agent"}]}
+        worktree = Path("/tmp/rcas-issue-41")
+        events = []
+
+        def prepare(_issue):
+            events.append("worktree")
+            return worktree, "feature/issue-41-test", "issue-41-test"
+
+        def architect(agent, prompt, cwd, session):
+            events.append("architect")
+            self.assertEqual("architect-agent", agent)
+            self.assertEqual(worktree, cwd)
+
+        with (
+            patch.object(worker, "issue_details", return_value=(issue, [])),
+            patch.object(worker, "comments_and_state", side_effect=[
+                ([], {"state": "todo"}),
+                ([{"body": "<!-- architect-design-note -->"}], {"state": "approval-pending"}),
+                ([], {"state": "approval-pending"}),
+            ]),
+            patch.object(worker, "record_start", return_value=123),
+            patch.object(worker, "prepare_worktree", side_effect=prepare),
+            patch.object(worker, "run_agent", side_effect=architect),
+        ):
+            worker.run_issue(41)
+
+        self.assertEqual(["worktree", "architect"], events)
+
+    def test_architecture_recovery_runs_in_worktree(self):
+        worker = LocalAgentWorker(Path.cwd(), poll_seconds=60, max_rounds=5)
+        issue = {"number": 41, "labels": [{"name": "local-agent"}]}
+        worktree = Path("/tmp/rcas-issue-41")
+        with (
+            patch.object(worker, "issue_details", return_value=(issue, [])),
+            patch.object(worker, "comments_and_state", return_value=([], {"state": "implementation"})),
+            patch.object(worker, "run_agent") as run_agent,
+        ):
+            worker.advance_to_implementation(
+                issue, {"local-agent"}, [], {"state": "architecture"}, "session", worktree,
+            )
+
+        self.assertEqual(worktree, run_agent.call_args.args[2])
+
+    def test_other_process_issue_lock_skips_busy_issue_and_releases_after_exit(self):
+        worker = LocalAgentWorker(Path.cwd(), poll_seconds=60, max_rounds=5)
+        worker.owner = "martinslavov"
+        issues = [
+            {"number": number, "title": f"Task {number}", "state": "open",
+             "user": {"login": "martinslavov"}, "labels": [{"name": "local-agent"}]}
+            for number in (41, 42)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            holder = subprocess.Popen(
+                [
+                    sys.executable, "-u", "-c",
+                    "import fcntl, sys; "
+                    "f = open(sys.argv[1], 'a'); "
+                    "fcntl.flock(f, fcntl.LOCK_EX); "
+                    "print('locked', flush=True); "
+                    "sys.stdin.read()",
+                    str(Path(directory) / "issue-41.lock"),
+                ],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+            )
+            try:
+                self.assertEqual("locked\n", holder.stdout.readline())
+                with (
+                    patch.object(worker, "lock_directory", return_value=Path(directory)),
+                    patch.object(worker, "list_issues", return_value=issues),
+                    patch.object(worker, "issue_details", side_effect=lambda n, **kwargs: (
+                        issues[n - 41], [{"body": f'<!-- task-state: {{"issue": {n}, "state": "todo"}} -->'}],
+                    )),
+                    patch.object(worker, "run_issue") as run_issue,
+                ):
+                    self.assertTrue(worker.process_once())
+                    run_issue.assert_called_once_with(42)
+                    run_issue.reset_mock()
+                    self.assertFalse(worker.process_once(requested_issue=41))
+                    run_issue.assert_not_called()
+                    holder.stdin.close()
+                    holder.wait(timeout=10)
+                    self.assertTrue(worker.process_once())
+                    run_issue.assert_called_once_with(41)
+            finally:
+                if holder.poll() is None:
+                    holder.kill()
+                    holder.wait(timeout=10)
+                holder.stdout.close()
+                if not holder.stdin.closed:
+                    holder.stdin.close()
+
+    def test_issue_lock_is_released_after_failure(self):
+        worker = LocalAgentWorker(Path.cwd(), poll_seconds=60, max_rounds=5)
+        worker.owner = "martinslavov"
+        issue = {
+            "number": 41, "title": "Task", "state": "open",
+            "user": {"login": "martinslavov"}, "labels": [{"name": "local-agent"}],
+        }
+        comments = [{"body": '<!-- task-state: {"issue": 41, "state": "todo"} -->'}]
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(worker, "lock_directory", return_value=Path(directory)),
+            patch.object(worker, "list_issues", return_value=[issue]),
+            patch.object(worker, "issue_details", return_value=(issue, comments)),
+            patch.object(worker, "run_issue", side_effect=WorkerError("failure")),
+            patch.object(worker, "add_label") as add_label,
+        ):
+            self.assertTrue(worker.process_once())
+            add_label.assert_called_once_with(41, LOCAL_FAILED_LABEL)
+            with worker.lock("issue-41", blocking=False) as acquired:
+                self.assertTrue(acquired)
 
     def test_merge_uses_validated_head_and_stops_when_head_changes(self):
         sha = "a" * 40
