@@ -47,6 +47,9 @@ logging:
 
 # Actuator Endpoints #
 management:
+  metrics:
+    tags:
+      application: rcas
   security:
     enabled: false
   server:

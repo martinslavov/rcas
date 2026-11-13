@@ -1,0 +1,1016 @@
+{
+  "id": null,
+  "uid": "rcas-cache-db-load",
+  "title": "RCAS — Cache & Database Load",
+  "tags": ["rcas", "cache", "database"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "job",
+        "type": "query",
+        "label": "Job",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(up, job)",
+        "query": {
+          "query": "label_values(up, job)",
+          "refId": "Prometheus-job-Variable-Query"
+        },
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": ["rcas"],
+          "value": ["rcas"]
+        }
+      },
+      {
+        "name": "application",
+        "type": "query",
+        "label": "Application",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(rcas_cache_lookup_seconds_count{job=~\"$job\"}, application)",
+        "query": {
+          "query": "label_values(rcas_cache_lookup_seconds_count{job=~\"$job\"}, application)",
+          "refId": "Prometheus-application-Variable-Query"
+        },
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": ["All"],
+          "value": [".*"]
+        }
+      },
+      {
+        "name": "instance",
+        "type": "query",
+        "label": "Instance",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(rcas_cache_lookup_seconds_count{job=~\"$job\",application=~\"$application\"}, instance)",
+        "query": {
+          "query": "label_values(rcas_cache_lookup_seconds_count{job=~\"$job\",application=~\"$application\"}, instance)",
+          "refId": "Prometheus-instance-Variable-Query"
+        },
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": ["All"],
+          "value": [".*"]
+        }
+      },
+      {
+        "name": "cache",
+        "type": "query",
+        "label": "Cache",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(rcas_cache_lookup_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\"}, cache)",
+        "query": {
+          "query": "label_values(rcas_cache_lookup_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\"}, cache)",
+          "refId": "Prometheus-cache-Variable-Query"
+        },
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": ["All"],
+          "value": [".*"]
+        }
+      },
+      {
+        "name": "operation",
+        "type": "query",
+        "label": "Operation",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(rcas_cache_lookup_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\"}, operation)",
+        "query": {
+          "query": "label_values(rcas_cache_lookup_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\"}, operation)",
+          "refId": "Prometheus-operation-Variable-Query"
+        },
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": ["All"],
+          "value": [".*"]
+        }
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "HTTP requests / second by route",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "B",
+          "expr": "sum(rate(http_server_requests_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",uri!~\"/actuator.*|UNKNOWN\"}[$__rate_interval]))",
+          "legendFormat": "total",
+          "range": true
+        },
+        {
+          "refId": "A",
+          "expr": "sum by (uri) (rate(http_server_requests_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",uri!~\"/actuator.*|UNKNOWN\"}[$__rate_interval]))",
+          "legendFormat": "{{uri}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Cache lookups / second by layer and outcome",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (layer, outcome) (rate(rcas_cache_lookup_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__rate_interval]))",
+          "legendFormat": "{{layer}} / {{outcome}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Database repository reads / second",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (cache, operation, outcome) (rate(rcas_database_read_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__rate_interval]))",
+          "legendFormat": "{{cache}} / {{operation}} / {{outcome}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Logical reads / second by source and outcome",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (source, outcome) (rate(rcas_cache_logical_read_total{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__rate_interval]))",
+          "legendFormat": "{{source}} / {{outcome}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Logical reads served by source (%)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (source) (increase(rcas_cache_logical_read_total{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\",source!=\"none\",outcome=~\"success|empty\"}[$__range])) / scalar(sum(increase(rcas_cache_logical_read_total{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\",source!=\"none\",outcome=~\"success|empty\"}[$__range]))) * 100",
+          "legendFormat": "{{source}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "noValue": "No served reads in range"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Cache hit ratio (hits / (hits + misses))",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum by (layer) (rate(rcas_cache_lookup_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\",outcome=\"hit\"}[$__rate_interval])) or (0 * sum by (layer) (rate(rcas_cache_lookup_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\",outcome=~\"hit|miss\"}[$__rate_interval])))) / sum by (layer) (rate(rcas_cache_lookup_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\",outcome=~\"hit|miss\"}[$__rate_interval])) * 100",
+          "legendFormat": "{{layer}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "noValue": "No lookups in range"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Cache lookups — total in selected period",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(rcas_cache_lookup_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__range]))",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Cache hits — total in selected period",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(rcas_cache_lookup_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\",outcome=\"hit\"}[$__range]))",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Cache misses — total in selected period",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(rcas_cache_lookup_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\",outcome=\"miss\"}[$__range]))",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Database reads — total in selected period",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(rcas_database_read_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__range]))",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "stat",
+      "title": "Errors — total in selected period",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase({__name__=~\"rcas_cache_lookup_seconds_count|rcas_database_read_seconds_count|rcas_cache_write_seconds_count|rcas_cache_ttl_refresh_seconds_count\",job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\",outcome=\"error\"}[$__range]))",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 19,
+      "type": "stat",
+      "title": "Redis lookup failures — total in selected period",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(rcas_cache_redis_fallback_total{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__range]))",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Cache lookup latency by layer — avg / p95 / p99",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (layer) (rate(rcas_cache_lookup_seconds_sum{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__rate_interval])) / sum by (layer) (rate(rcas_cache_lookup_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__rate_interval]))",
+          "legendFormat": "{{layer}} avg",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le, layer) (rate(rcas_cache_lookup_seconds_bucket{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__rate_interval])))",
+          "legendFormat": "{{layer}} p95",
+          "range": true
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le, layer) (rate(rcas_cache_lookup_seconds_bucket{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__rate_interval])))",
+          "legendFormat": "{{layer}} p99",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Database read latency — avg / p95 / p99",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (cache, operation) (rate(rcas_database_read_seconds_sum{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__rate_interval])) / sum by (cache, operation) (rate(rcas_database_read_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__rate_interval]))",
+          "legendFormat": "{{cache}} / {{operation}} avg",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le, cache, operation) (rate(rcas_database_read_seconds_bucket{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__rate_interval])))",
+          "legendFormat": "{{cache}} / {{operation}} p95",
+          "range": true
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le, cache, operation) (rate(rcas_database_read_seconds_bucket{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__rate_interval])))",
+          "legendFormat": "{{cache}} / {{operation}} p99",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Cache writes / second",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 37
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (layer, outcome) (rate(rcas_cache_write_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__rate_interval]))",
+          "legendFormat": "{{layer}} / {{outcome}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Redis TTL refreshes / second",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 37
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (trigger, outcome) (rate(rcas_cache_ttl_refresh_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__rate_interval]))",
+          "legendFormat": "{{trigger}} / {{outcome}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Cache / database errors and Redis fallback",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 45
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (layer) (rate(rcas_cache_lookup_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\",outcome=\"error\"}[$__rate_interval]))",
+          "legendFormat": "cache lookup error / {{layer}}",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(rcas_database_read_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\",outcome=\"error\"}[$__rate_interval]))",
+          "legendFormat": "database read error",
+          "range": true
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (layer) (rate(rcas_cache_write_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\",outcome=\"error\"}[$__rate_interval]))",
+          "legendFormat": "cache write error / {{layer}}",
+          "range": true
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(rcas_cache_ttl_refresh_seconds_count{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\",outcome=\"error\"}[$__rate_interval]))",
+          "legendFormat": "Redis TTL refresh error",
+          "range": true
+        },
+        {
+          "refId": "E",
+          "expr": "sum(rate(rcas_cache_redis_fallback_total{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__rate_interval]))",
+          "legendFormat": "Redis lookup failure → DB fallback",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Caffeine entries and evictions",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 45
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (cache) (cache_size{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\"})",
+          "legendFormat": "{{cache}} entries",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (cache) (rate(cache_evictions_total{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\"}[$__rate_interval]))",
+          "legendFormat": "{{cache}} evictions / second",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Target availability, process CPU, JVM heap",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 53
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=~\"$job\",instance=~\"$instance\"}",
+          "legendFormat": "{{job}} / {{instance}} up",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "expr": "process_cpu_usage{job=~\"$job\",application=~\"$application\",instance=~\"$instance\"} * 100",
+          "legendFormat": "{{instance}} process CPU %",
+          "range": true
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (instance) (jvm_memory_used_bytes{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",area=\"heap\"}) / sum by (instance) (jvm_memory_max_bytes{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",area=\"heap\"}) * 100",
+          "legendFormat": "{{instance}} JVM heap %",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Logical reads — total in selected period by source and outcome",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 61
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (source, outcome) (increase(rcas_cache_logical_read_total{job=~\"$job\",application=~\"$application\",instance=~\"$instance\",cache=~\"$cache\",operation=~\"$operation\"}[$__range]))",
+          "legendFormat": "{{source}} / {{outcome}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No data (target or metric unavailable)"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ]
+}
