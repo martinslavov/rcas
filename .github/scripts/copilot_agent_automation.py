@@ -19,12 +19,15 @@ from typing import Any
 
 API_ROOT = "https://api.github.com"
 API_VERSION = "2022-11-28"
-ENTRY_LABEL = "agent-read"
+ENTRY_LABEL = "cloud-agent"
+LOCAL_AGENT_LABEL = "local-agent"
 BACKLOG_LABEL = "backlog"
 HUMAN_REVIEW_LABEL = "needs-human-review"
 ARCHITECTURE_APPROVAL_LABEL = "architecture-approval-required"
 SKIP_ARCHITECT_LABEL = "skip-architect"
 SHIP_PR_MARKER = "<!-- ship-pr -->"
+QUICK_PR_MARKER = "<!-- no-task-issue -->"
+QUICK_PR_AUTO_MARKER = "<!-- quick-pr-cloud-auto-merge -->"
 CI_FIX_ATTEMPT_LIMIT = 3
 REQUIRED_CHECKS = (
     "unit-tests",
@@ -200,6 +203,7 @@ def _dispatch_for_issue_comment(
         _is_pr(issue)
         or issue.get("state") != "open"
         or ENTRY_LABEL not in issue_labels
+        or LOCAL_AGENT_LABEL in issue_labels
         or BACKLOG_LABEL in issue_labels
         or HUMAN_REVIEW_LABEL in issue_labels
     ):
@@ -221,6 +225,7 @@ def _ready_issue_dispatch(api: GitHub, issue: dict[str, Any]) -> Dispatch | None
         _is_pr(issue)
         or issue.get("state") != "open"
         or ENTRY_LABEL not in issue_labels
+        or LOCAL_AGENT_LABEL in issue_labels
         or BACKLOG_LABEL in issue_labels
         or HUMAN_REVIEW_LABEL in issue_labels
     ):
@@ -294,9 +299,37 @@ def _task_issue_for_pr(api: GitHub, pr: dict[str, Any]) -> dict[str, Any] | None
     issue = api.request("GET", f"/repos/{api.repository}/issues/{number}")
     if issue.get("state") != "open" or _is_pr(issue):
         return None
-    if HUMAN_REVIEW_LABEL in _labels(issue) or HUMAN_REVIEW_LABEL in _labels(pr):
+    issue_labels = _labels(issue)
+    if (
+        LOCAL_AGENT_LABEL in issue_labels
+        or HUMAN_REVIEW_LABEL in issue_labels
+        or HUMAN_REVIEW_LABEL in _labels(pr)
+    ):
         return None
     return issue
+
+
+def _is_quick_pr(api: GitHub, pr: dict[str, Any]) -> bool:
+    body = pr.get("body") or ""
+    head = pr.get("head") or {}
+    return (
+        pr.get("state") == "open"
+        and not pr.get("draft")
+        and (pr.get("base") or {}).get("ref") == "main"
+        and (pr.get("user") or {}).get("login") == api.owner
+        and (head.get("repo") or {}).get("full_name") == api.repository
+        and bool(re.fullmatch(r"(?:feature|hotfix)/[A-Za-z0-9._/-]+", head.get("ref") or ""))
+        and QUICK_PR_MARKER in body
+        and QUICK_PR_AUTO_MARKER in body
+        and SHIP_PR_MARKER not in body
+        and _linked_issue_number(body) is None
+        and ENTRY_LABEL in _labels(pr)
+        and HUMAN_REVIEW_LABEL not in _labels(pr)
+    )
+
+
+def _eligible_pr(api: GitHub, pr: dict[str, Any]) -> bool:
+    return _is_quick_pr(api, pr) or _task_issue_for_pr(api, pr) is not None
 
 
 def _dispatch_from_pull_request(event: dict[str, Any], api: GitHub) -> list[Dispatch]:
@@ -309,8 +342,7 @@ def _dispatch_from_pull_request(event: dict[str, Any], api: GitHub) -> list[Disp
     if not number:
         return []
     pr = api.request("GET", f"/repos/{api.repository}/pulls/{number}")
-    issue = _task_issue_for_pr(api, pr)
-    if issue is None:
+    if not _eligible_pr(api, pr):
         return []
     sha = (pr.get("head") or {}).get("sha")
     if not isinstance(sha, str):
@@ -318,6 +350,10 @@ def _dispatch_from_pull_request(event: dict[str, Any], api: GitHub) -> list[Disp
     status = api.request("GET", f"/repos/{api.repository}/commits/{sha}/status")
     review_state = _status_state(status, "PR Review")
     qa_state = _status_state(status, "QA Agent")
+    if _is_quick_pr(api, pr) and (
+        review_state in {"failure", "error"} or qa_state in {"failure", "error"}
+    ):
+        return []
     if review_state == "success" and qa_state in {None, "pending"}:
         return [Dispatch("pull", number, "senior-qa-engineer", sha)]
     if review_state in {None, "pending"}:
@@ -336,8 +372,19 @@ def _dispatch_from_status(event: dict[str, Any], api: GitHub) -> list[Dispatch]:
         return []
     dispatches = []
     for pr in _candidate_prs(api, sha):
-        if pr.get("head", {}).get("sha") != sha or _task_issue_for_pr(api, pr) is None:
+        if pr.get("head", {}).get("sha") != sha or not _eligible_pr(api, pr):
             continue
+        if _is_quick_pr(api, pr):
+            if state in {"failure", "error"}:
+                continue
+            current_status = api.request("GET", f"/repos/{api.repository}/commits/{sha}/status")
+            if _status_state(current_status, context) != state:
+                continue
+            if any(
+                _status_state(current_status, name) in {"failure", "error"}
+                for name in ("PR Review", "QA Agent")
+            ):
+                continue
         if state in {"failure", "error"} and _failure_round_limit_reached(api, pr["number"], context):
             continue
         dispatches.append(Dispatch("pull", pr["number"], agent, sha))
@@ -513,13 +560,17 @@ def _dispatch_from_schedule(api: GitHub) -> list[Dispatch]:
 
     ci_checks = tuple(name for name in REQUIRED_CHECKS if name not in {"PR Review", "QA Agent"})
     for pr in api.pages(f"/repos/{api.repository}/pulls?state=open&base=main"):
-        if _task_issue_for_pr(api, pr) is None:
+        if not _eligible_pr(api, pr):
             continue
         sha = pr["head"]["sha"]
         status = api.request("GET", f"/repos/{api.repository}/commits/{sha}/status")
         review_state = _status_state(status, "PR Review")
         qa_state = _status_state(status, "QA Agent")
 
+        if _is_quick_pr(api, pr) and (
+            review_state in {"failure", "error"} or qa_state in {"failure", "error"}
+        ):
+            continue
         if review_state in {"failure", "error"}:
             if not _failure_round_limit_reached(api, pr["number"], "PR Review"):
                 result.append(Dispatch("pull", pr["number"], "senior-java-software-engineer", sha))
@@ -570,7 +621,11 @@ def get_dispatches(event_name: str, event: dict[str, Any], api: GitHub) -> list[
     if event_name == "issues":
         issue = event.get("issue") or {}
         label = (event.get("label") or {}).get("name")
-        if event.get("action") == "labeled" and label == ENTRY_LABEL and issue.get("state") == "open":
+        if (
+            event.get("action") == "labeled"
+            and label == ENTRY_LABEL
+            and issue.get("state") == "open"
+        ):
             if not _is_pr(issue) and BACKLOG_LABEL not in _labels(issue) and HUMAN_REVIEW_LABEL not in _labels(issue):
                 dispatch = _ready_issue_dispatch(api, issue)
                 return [dispatch] if dispatch else []
@@ -686,11 +741,20 @@ def assign_to_copilot(api: GitHub, dispatch: Dispatch) -> None:
     profile = AGENT_FILES[dispatch.stage]
     custom_instructions = (
         f"Follow the custom agent profile `.github/agents/{profile}` and the task workflow in "
-        "`.github/copilot-instructions.md`. This is a staged `agent-read` task. Preserve the "
+        "`.github/copilot-instructions.md`. This is a staged `cloud-agent` task. Preserve the "
         "required-status, bounded-retry, and human-review gates. If the issue has the explicit "
         "`skip-architect` label, follow its documented architecture opt-out instead of requiring "
         "Architect comments or approval."
     )
+    if dispatch.resource == "pull":
+        pr = api.request("GET", f"/repos/{api.repository}/pulls/{dispatch.number}")
+        if _is_quick_pr(api, pr):
+            custom_instructions = (
+                f"Follow `.github/agents/{profile}` and `.github/copilot-instructions.md`. "
+                "This PR has no task issue: use its description as the scope and the PR number as the "
+                "issue value in the agent-run record. Do not make orchestrator transitions or create an issue. "
+                "Do not edit or push code; report failures and set the final status on the reviewed head SHA."
+            )
     mutation = """
       mutation($assignable: ID!, $actor: ID!, $repository: ID!, $baseRef: String!,
                $instructions: String!, $customAgent: String!) {
@@ -782,9 +846,10 @@ def _has_human_comments(api: GitHub, number: int) -> bool:
 
 def merge_if_ready(api: GitHub, number: int) -> bool:
     pr = api.request("GET", f"/repos/{api.repository}/pulls/{number}")
-    issue = _task_issue_for_pr(api, pr)
-    if issue is None or pr.get("draft"):
-        print(f"PR #{number} is not an open agent-read PR; not merging")
+    quick_pr = _is_quick_pr(api, pr)
+    issue = None if quick_pr else _task_issue_for_pr(api, pr)
+    if (issue is None and not quick_pr) or pr.get("draft"):
+        print(f"PR #{number} is not an eligible agent PR; not merging")
         return False
     sha = pr["head"]["sha"]
     labels = api.request("GET", f"/repos/{api.repository}/issues/{number}/labels")
@@ -793,6 +858,10 @@ def merge_if_ready(api: GitHub, number: int) -> bool:
         return False
     status = api.request("GET", f"/repos/{api.repository}/commits/{sha}/status")
     check_runs = _check_runs(api, sha)
+    for context in ("PR Review", "QA Agent"):
+        if _status_state(status, context) != "success":
+            print(f"PR #{number} is waiting for {context} commit status")
+            return False
     for name in REQUIRED_CHECKS:
         state, source = _latest_check_result(check_runs, status.get("statuses", []), name)
         if state != "success":
@@ -802,17 +871,19 @@ def merge_if_ready(api: GitHub, number: int) -> bool:
         print(f"PR #{number} has a human comment or review; not merging")
         return False
 
-    issue_comments = api.pages(f"/repos/{api.repository}/issues/{issue['number']}/comments")
-    start_epoch = next(
-        (
-            int(match.group(1))
-            for comment in issue_comments
-            if (match := START_EPOCH_RE.search(comment.get("body") or ""))
-        ),
-        None,
-    )
-    if start_epoch is None:
-        raise AutomationError(f"Issue #{issue['number']} has no agent automation start marker")
+    start_epoch = None
+    if issue is not None:
+        issue_comments = api.pages(f"/repos/{api.repository}/issues/{issue['number']}/comments")
+        start_epoch = next(
+            (
+                int(match.group(1))
+                for comment in issue_comments
+                if (match := START_EPOCH_RE.search(comment.get("body") or ""))
+            ),
+            None,
+        )
+        if start_epoch is None:
+            raise AutomationError(f"Issue #{issue['number']} has no agent automation start marker")
     result = api.request(
         "PUT",
         f"/repos/{api.repository}/pulls/{number}/merge",
@@ -821,16 +892,17 @@ def merge_if_ready(api: GitHub, number: int) -> bool:
     if not result.get("merged"):
         raise AutomationError(f"GitHub did not merge PR #{number}")
     print(f"Merged PR #{number}: {result.get('message', 'success')}")
-    subprocess.run(
-        [
-            "bash",
-            ".github/scripts/post_task_elapsed.sh",
-            str(issue["number"]),
-            str(number),
-            str(start_epoch),
-        ],
-        check=True,
-    )
+    if issue is not None:
+        subprocess.run(
+            [
+                "bash",
+                ".github/scripts/post_task_elapsed.sh",
+                str(issue["number"]),
+                str(number),
+                str(start_epoch),
+            ],
+            check=True,
+        )
     head_repo = (pr.get("head", {}).get("repo") or {}).get("full_name")
     head_ref = pr.get("head", {}).get("ref", "")
     if head_repo == api.repository and re.fullmatch(r"(?:feature|hotfix)/[A-Za-z0-9._/-]+", head_ref):
@@ -848,7 +920,7 @@ def _event_pr_numbers(event_name: str, event: dict[str, Any], api: GitHub) -> li
         return [
             pr["number"]
             for pr in api.pages(f"/repos/{api.repository}/pulls?state=open&base=main")
-            if _task_issue_for_pr(api, pr) is not None
+            if _eligible_pr(api, pr)
         ]
     if event_name == "status":
         sha = event.get("sha")
@@ -861,7 +933,7 @@ def _event_pr_numbers(event_name: str, event: dict[str, Any], api: GitHub) -> li
     return [
         pr["number"]
         for pr in _candidate_prs(api, sha)
-        if pr.get("head", {}).get("sha") == sha and _task_issue_for_pr(api, pr) is not None
+        if pr.get("head", {}).get("sha") == sha and _eligible_pr(api, pr)
     ]
 
 

@@ -70,10 +70,10 @@ to the issue, actor and current branch SHA. The dispatch workflow `GITHUB_TOKEN`
 CI fix attempts, human-review labels and escalation comments; it uses
 `COPILOT_AGENT_TOKEN` only for the GitHub GraphQL Copilot assignment API, because that API requires a user-to-server token and does not accept the Actions installation token.
 The dispatch token is not passed to the merge workflow.
-Auto-merge checks the current PR head, linked `agent-read` issue, all required status/check contexts plus Definition of
+Auto-merge checks the current PR head, linked `cloud-agent` issue, all required status/check contexts plus Definition of
 Done, the `needs-human-review` label, and human PR comments/reviews before calling the merge API. The merge job checks out
 only the default branch and runs no PR-controlled code. It records task elapsed time after merge from the start marker
-written at the first Architect or Engineer dispatch. The dispatcher and auto-merge workflows poll open agent-read PRs every five minutes; the PR-creation workflow polls its
+written at the first Architect or Engineer dispatch. The dispatcher and auto-merge workflows poll open cloud-agent PRs every five minutes; the PR-creation workflow polls its
 authorized issue/branch records on the same interval. Stage dispatch, intake recovery and merge therefore do not depend on
 follow-up events emitted by Actions runs.
 
@@ -160,7 +160,7 @@ it does not replace GitHub authorization. Separate identities per agent are defe
 |-------|----------|------------|
 | `product-owner-agent` | read, search, execute | Creates/updates GitHub issues only; no code |
 | `architect-agent` | read, search, execute | Issue comments and the approval label only; no code |
-| `senior-java-software-engineer` | read, edit, search, execute | Source, tests, docs and workflows on a `feature/*` branch; pushes implementation branches and fixes on existing PRs; PR creation is handled through `/ship-pr` |
+| `senior-java-software-engineer` | read, edit, search, execute | Source, tests, docs and workflows on a `feature/*` branch; pushes implementation branches and fixes on existing PRs; PR creation is handled by the coordinator, local worker or guarded cloud workflow |
 | `pr-review-agent` | read, search, execute | PR comments and the `PR Review` status; no code |
 | `senior-qa-engineer` | read, edit, search, execute | Adds or improves tests on the PR branch (`edit` is needed for that), PR comments, the `QA Agent` status; no production code |
 | `dod-validator-agent` | read, search, execute | PR comments and the `Definition of Done` status; no code |

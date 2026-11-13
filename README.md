@@ -51,7 +51,8 @@ worktree:
 ```
 
 Cleanup fetches `origin/main` and refuses to delete the worktree if it contains uncommitted or untracked files, or if its
-branch has not been merged. On success it removes the worktree folder and the **local** branch; it never deletes a remote
+branch has not been merged. It accepts `session/<name>` and branches renamed to `feature/<name>` or `hotfix/<name>`;
+other branch names and detached HEADs are refused. On success it removes the worktree folder and the **local** branch; it never deletes a remote
 branch. The removed folder also includes ignored/generated files such as local IDE settings and build output. Archiving a
 Copilot chat does not trigger cleanup automatically, so run this command yourself.
 
@@ -307,8 +308,9 @@ Workflows live in `.github/workflows`:
 | `ci-artifact-roundtrip.yml` (CI Artifact Round Trip) | pull request changing `ci-release.yml` or this workflow, manual | Side-effect-free check of the CI Release `release-image-context` artifact contract: packs a generated fixture like the release `build` job, uploads it with the same pinned `upload-artifact`, downloads it with the same pinned `download-artifact` into `$RUNNER_TEMP/release-image-context`, restores it with the release `tar -xzf` command and verifies the path, listing, content and SHA-256 digests. Runs with `permissions: {}` and no secrets; never calls CI Release, uses tags, logs in to registries, publishes, edits releases or prunes |
 | `ci-code-review.yml` (CodeQL) | pull request and push to `main`, weekly | Static security analysis, results appear in the Security tab |
 | `ci-pr-issue-tracking.yml` (PR Issue Tracking) | pull request opened | Creates one tracking issue per PR (found again by a hidden marker, so it is never duplicated) and links it in a PR comment |
-| `ci-agent-dispatch.yml` (Copilot Agent Dispatch) | `agent-read` label, architecture approval, agent status changes, failed required checks, every five minutes | Assigns the next repository custom agent to Copilot cloud agent through the GitHub API |
-| `ci-agent-auto-merge.yml` (Agent PR Auto Merge) | agent status/check changes, PR comments/reviews, every five minutes | Merges only agent-read PRs with all required checks and agent statuses successful on the current head, no human PR comments/reviews, and no `needs-human-review` label |
+| `ci-agent-dispatch.yml` (Copilot Agent Dispatch) | `cloud-agent` label, architecture approval, agent status changes, failed required checks, every five minutes | Assigns the next repository custom agent to Copilot cloud agent through the GitHub API |
+| `ci-agent-auto-merge.yml` (Agent PR Auto Merge) | agent status/check changes, PR comments/reviews, every five minutes | Merges only cloud-agent PRs with all required checks and agent statuses successful on the current head, no human PR comments/reviews, and no `needs-human-review` label |
+| `.github/scripts/local_agent_worker.py` | Manually started; polls issues labeled `local-agent` | Runs local Copilot CLI agents in isolated worktrees, creates PRs, performs review/QA/CI gates and merges only when all checks pass |
 
 Releases are created automatically for merged PRs into `main`: add the `major` label for a major bump or `enhancement` for a minor bump; otherwise the version receives a patch bump. The first automatic release is `v0.1.0`. A commit already carrying a stable `vX.Y.Z` tag is not tagged again. Fork PR merges are handled by a `main` push fallback that verifies the commit belongs to a merged PR from a fork. The mutating jobs (CI Tag `tag` and CI Release `publish`, `dockerhub`, `release`, `latest`, `dockerhub-latest` and `prune`) share one job-level concurrency group `release-tag` with `queue: max` and no cancellation, so automatic releases, image publication, latest alias movement and cleanup are serialized in one FIFO queue (pending jobs not replaced), and tag-reference creation retries against the latest tags to avoid losing a merge when concurrent releases choose the same next version. Manual `v*` tag pushes still create releases and apply the two-release retention policy. The **CI Release** `workflow_dispatch` input is restricted by workflow validation to an existing strict stable `vX.Y.Z` tag for backfills. Retention and `latest` selection consider stable versions in numeric SemVer order:
 
@@ -349,26 +351,28 @@ Custom agents live in `.github/agents/`:
 |-------|------|
 | `product-owner-agent` | Senior Product Owner: analyzes the input and creates a GitHub issue with acceptance criteria |
 | `architect-agent` | Senior Software Architect: posts a design note or an auditable skip, and gates high-risk changes on explicit user approval |
-| `senior-java-software-engineer` | Senior Java Software Engineer: implements and pushes the issue branch; PR creation is handled by `/ship-pr` locally or the guarded cloud workflow for TAG tasks |
+| `senior-java-software-engineer` | Senior Java Software Engineer: implements and pushes the issue branch; PR creation is handled by the task coordinator, local worker or guarded cloud workflow |
 | `pr-review-agent` | Independent PR Reviewer: reads the issue and full diff, posts severity-ranked findings and sets `PR Review`; never changes code |
 | `senior-qa-engineer` | Senior QA Engineer: starts after current-head `PR Review` success, tests the PR, reports bugs and sets `QA Agent` |
 | `dod-validator-agent` | Definition of Done Validator: **manual only** (no flow starts it; run it explicitly), maps every acceptance criterion to behaviour-verifying evidence, posts the AC → evidence table and sets `Definition of Done`; never changes code |
 
-Reusable procedures such as `/ship-pr` (commit → push → PR → PR Review → QA → merge; DoD is manual only and not run by the skill) live in `.github/skills/`; see [Skills](.github/docs/skills.md).
+Reusable procedures such as `/create-pr-cloud` (commit → push → PR → PR Review → QA → merge; DoD is manual only and not run by the skill) live in `.github/skills/`; see [Skills](.github/docs/skills.md).
 
 Give a task with `TASK-NAME:<name>` on the first line. Optional metadata lines are `DEVELOPMENT: low|medium|high` and
-`TAG: agent-read,skip-architect,skip-product-owner` (any supported subset), followed by `DESCRIPTION: <description>` or
+`TAG: cloud-agent,local-agent,skip-architect,skip-product-owner` (any supported subset; do not combine `cloud-agent` and
+`local-agent`), followed by `DESCRIPTION: <description>` or
 free-form description text. `DEVELOPMENT` becomes a `development:<level>` issue label. The Product Owner consumes the
 metadata, creates the issue with the selected labels and keeps control lines out of the issue title/body. `skip-product-owner`
 instead has the main agent create the task issue directly; `skip-architect` starts Engineer directly and explicitly bypasses
-architecture comments and approval, including `architecture-approval-required`. With `agent-read`, the trusted cloud workflow
+architecture comments and approval, including `architecture-approval-required`. With `cloud-agent`, the trusted cloud workflow
 dispatches Architect unless `skip-architect` is set, then creates/reuses an eligible `feature/<issue>-<task-slug>` PR and
-hands off to PR Review → QA → automatic merge. The five-minute poll recovers a missed PR/intake. For backward compatibility,
+hands off to PR Review → QA → automatic merge. `local-agent` instead opts an owner-authored issue into the local worker below.
+The five-minute cloud poll recovers a missed PR/intake. For backward compatibility,
 a first-line TAG followed by the task-name line is still accepted. `LABEL:BACKLOG,TASK-NAME:<name>` also remains supported,
 with optional metadata after the task name. See [Agent automation](.github/docs/agent-automation.md).
 
 The interactive workflow is Product Owner (unless `skip-product-owner`) → Architect (unless `skip-architect`) →
-explicit user approval when required → Engineer → (cloud PR workflow for `agent-read` tasks or `/ship-pr` locally) → PR Review → QA → merge → elapsed time recorded on the issue and PR
+explicit user approval when required → Engineer → (`local-agent` worker, cloud PR workflow for `cloud-agent` tasks, or `/create-pr-cloud` manually) → PR Review → QA → merge → elapsed time recorded on the issue and PR
 (`.github/scripts/post_task_elapsed.sh`). For architecture changes (new module/layer/component or cache
 topology), database schema/migrations, messaging/Kafka, public HTTP API or security changes, the Architect applies
 `architecture-approval-required`; the orchestrator must wait for the user's explicit approval recorded on the issue as
@@ -422,11 +426,25 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 | Input | Result |
 |-------|--------|
 | `TASK-NAME:<name>` then optional `DEVELOPMENT`/`TAG` metadata | Issue created in `TODO`; each TAG becomes an issue label, and `DEVELOPMENT` becomes `development:<level>` |
-| `TASK-NAME:<name>` plus `TAG: agent-read` | Starts cloud automation: Architect then Engineer, unless `skip-architect` opts out; PR Review, QA and merge gates remain |
+| `TASK-NAME:<name>` plus `TAG: cloud-agent` | Starts cloud automation: Architect then Engineer, unless `skip-architect` opts out; PR Review, QA and merge gates remain |
+| `TASK-NAME:<name>` plus `TAG: local-agent` | Starts local automation when the worker is running; local sessions, separate worktrees, PR Review, QA, CI and gated merge |
 | `TAG: skip-product-owner,skip-architect` | Main agent creates the issue directly and starts Engineer without Product Owner, Architect or architecture approval |
-| `TASK-NAME:<name>` without TAG | Issue created in `TODO` (default) and the existing local flow runs |
+| `TASK-NAME:<name>` without TAG | Product Owner creates a TODO issue for the interactive local flow; no background worker starts |
+| `/create-issue` | Product Owner creates a TODO issue only; no implementation starts, so you can finish it yourself later |
+| `/create-pr-cloud` | Creates/reuses a task issue and PR; cloud automation runs review, QA, bounded fixes and gated automatic merge |
+| `/create-pr-local` | Creates a PR without a task issue; the local session runs PR Review and QA, then merges when all gates pass. Failures stop for human action |
 | `LABEL:BACKLOG,TASK-NAME:<name>` then optional metadata | Issue created in `Backlog`; `backlog` and any parsed metadata labels are set |
-| Legacy `TAG: agent-read` then a task-name line | Accepted for backward compatibility; labels and flow match the corresponding task-name input |
+
+#### Comparing task tags
+
+These examples use the same task description and `DEVELOPMENT: medium`; the development level adds the `development:medium`
+issue label but does not choose the execution flow.
+
+| Input tag | Issue creation | Execution |
+|------------|----------------|-----------|
+| `TAG: local-agent` | Product Owner creates the issue with `local-agent`. | The local worker picks it up when running. It works in an isolated worktree and proceeds through PR, review, QA, CI and gated merge. The issue must be owner-authored. |
+| `TAG: cloud-agent` | Product Owner creates the issue with `cloud-agent`. | GitHub Actions starts the cloud flow: Architect, then Engineer, followed by PR Review, QA, CI and automatic merge when all required gates pass. |
+| `TAG: cloud-agent,skip-architect,skip-product-owner` | The main agent creates the issue directly with the supplied labels; Product Owner is skipped. | The cloud flow starts Engineer directly without Architect or architecture approval. PR Review, QA, CI and merge gates still apply. |
 
 To start a backlog task without a state record, first seed it with `orchestrator.py init <issue> --state backlog --agent human`,
 then use `orchestrator.py transition <issue> todo --agent human`; it updates the board and removes the legacy `backlog` label.
@@ -445,6 +463,26 @@ and listed, with order and prerequisites, in [`.github/docs/pro-plan.md`](.githu
 python3 .github/scripts/orchestrator.py init 96 --state todo --agent human # seed an existing issue without a record
 python3 .github/scripts/orchestrator.py transition 96 architecture --agent architect-agent
 ```
+
+### Local autonomous worker
+
+The local worker requires the Copilot CLI and `gh` authenticated as `@martinslavov`. It runs only for issues authored by the
+repository owner and explicitly labeled `local-agent`; it never processes `cloud-agent`, `backlog`, `requires-pro` or
+`needs-human-review` issues. Start it manually from a clean, up-to-date `main` checkout:
+
+```bash
+python3 .github/scripts/local_agent_worker.py                 # poll every 60s; Ctrl+C stops it
+python3 .github/scripts/local_agent_worker.py --once          # process up to one issue, then exit
+python3 .github/scripts/local_agent_worker.py --workers 2     # allow two separate issue worktrees concurrently
+```
+
+Each issue and stage uses a named Copilot CLI session and an isolated `../rcas-sessions/issue-<number>-<slug>` worktree.
+Copilot does not run while the queue is empty; model usage begins only when an eligible issue is picked up. The worker uses
+non-interactive `--allow-all-tools`, so the label is explicit authorization to run trusted issue content with repository
+tools. Architecture approval, CI, PR Review, QA, human comments, and `needs-human-review` are merge gates. A stopped task
+gets `local-agent-failed`; inspect the terminal and remove that label to retry. Local failures never silently bypass the
+orchestrator. If `needs-human-review` is also present, only a human may remove it; remove both labels when explicitly
+resuming.
 
 ### Running agents without approval prompts
 

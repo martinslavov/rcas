@@ -64,7 +64,6 @@ start_session() {
 cleanup_session() {
   local name="$1" branch target status
   validate_name "$name"
-  branch="session/$name"
   target="$(worktree_path "$name")"
 
   if [[ -L "$target" || ! -d "$target" ]]; then
@@ -75,10 +74,14 @@ cleanup_session() {
     echo "refusing to remove a directory that is not this worktree: $target" >&2
     exit 1
   fi
-  if [[ "$(git -C "$target" branch --show-current)" != "$branch" ]]; then
-    echo "refusing to remove worktree: expected branch $branch" >&2
-    exit 1
-  fi
+  branch="$(git -C "$target" branch --show-current)"
+  case "$branch" in
+    "session/$name"|"feature/$name"|"hotfix/$name") ;;
+    *)
+      echo "refusing to remove worktree: expected session/$name, feature/$name or hotfix/$name" >&2
+      exit 1
+      ;;
+  esac
 
   status="$(git -C "$target" status --porcelain --untracked-files=all)"
   if [[ -n "$status" ]]; then
