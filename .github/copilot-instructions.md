@@ -70,7 +70,8 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
   Setup and token permissions are documented in `.github/docs/agent-automation.md` and `.github/docs/security.md`.
 - For local autonomous work, use `local-agent` instead of `cloud-agent` and start
   `python3 .github/scripts/local_agent_worker.py` from a clean, up-to-date `main` checkout. It processes owner-authored
-  issues oldest first, one per local session by default; `--workers N` enables independent concurrent issue worktrees. It
+  issues oldest first, one per local session by default; `--workers N` or multiple worker processes enable independent concurrent
+  issue worktrees. Per-issue locks coordinate processes sharing the same Git repository, not separate clones. It
   uses Copilot CLI's non-interactive `--allow-all-tools` mode, so only explicitly opted-in trusted tasks may be processed.
   An issue stopped by a local failure receives `local-agent-failed`; remove that label to retry. The worker does not process
   `requires-pro`, backlog, or `needs-human-review` tasks. See `.github/docs/agent-automation.md`.

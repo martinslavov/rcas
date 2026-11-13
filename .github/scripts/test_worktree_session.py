@@ -1,11 +1,14 @@
 """Exercise worktree cleanup against isolated local Git repositories."""
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
+
+from local_agent_worker import LocalAgentWorker
 
 
 SCRIPT = Path(__file__).with_name("worktree-session.sh").resolve()
@@ -101,6 +104,32 @@ class WorktreeCleanupTest(unittest.TestCase):
         self.git("add", "unmerged", cwd=self.target)
         self.git("commit", "-m", "Not merged", cwd=self.target)
         self.assert_cleanup_refused("not merged into origin/main")
+
+    def test_new_session_starts_from_remote_main_not_current_branch(self):
+        self.git("switch", "-c", "feature/unrelated")
+        (self.repo / "unrelated").write_text("unrelated change")
+        self.git("add", "unrelated")
+        self.git("commit", "-m", "Unrelated branch change")
+        main_sha = self.git("rev-parse", "origin/main").stdout.strip()
+
+        self.helper("start", "fresh", "--no-open")
+
+        fresh = self.repo.parent / "repo-sessions" / "fresh"
+        self.assertEqual(main_sha, self.git("rev-parse", "HEAD", cwd=fresh).stdout.strip())
+        self.assertFalse((fresh / "unrelated").exists())
+
+    def test_concurrent_workers_create_separate_worktrees_from_main(self):
+        issues = [{"number": 41, "title": "First"}, {"number": 42, "title": "Second"}]
+        workers = [LocalAgentWorker(self.repo, 60, 5) for _ in issues]
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda pair: pair[0].prepare_worktree(pair[1]), zip(workers, issues)))
+
+        main_sha = self.git("rev-parse", "origin/main").stdout.strip()
+        self.assertNotEqual(results[0][0], results[1][0])
+        for worktree, branch, _ in results:
+            self.assertEqual(main_sha, self.git("rev-parse", "HEAD", cwd=worktree).stdout.strip())
+            self.assertEqual(branch, self.git("branch", "--show-current", cwd=worktree).stdout.strip())
+        self.assertEqual(results[0], workers[0].prepare_worktree(issues[0]))
 
 
 if __name__ == "__main__":
