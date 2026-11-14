@@ -10,23 +10,7 @@
 
 A read goes through the caches first and only falls back to the database on a miss, so repeated requests are served without hitting PostgreSQL. All layers are non-blocking, which keeps the service responsive under load with a small number of threads.
 
-Cache entries in Caffeine and Redis expire after access. Configure the shared idle expiration with `cache.expiration.hours` (24 hours by default). Independently, `cache.max-lifetime.hours` (24 hours by default) bounds the age of a value from the time it was cached; reads and promotion from Redis to Caffeine do not reset this age. Redis idle expiry is refreshed only up to the remaining maximum lifetime. Redis values without the current timestamp envelope are treated as misses and replaced when the source is read.
-
-Integrations that change source data outside RCAS should invoke the reactive `CacheService` invalidation operation after the source write succeeds, and await its completion:
-
-```java
-Mono<Void> afterUserSourceChange(Long userId) {
-    return cacheService.invalidateUser(userId);
-}
-
-Mono<Void> afterSubscriptionSourceChange(Long subscriptionId, Long oldUserId, Long newUserId) {
-    return cacheService.invalidateSubscription(subscriptionId, oldUserId, newUserId);
-}
-```
-
-`invalidateUser` removes the user's item key (`cacheUser:<userId>`). `invalidateSubscription` removes the subscription item key (`cacheSubscription:<subscriptionId>`) and the per-user subscription-list keys (`cacheSubscription:-<userId>`) for each non-null old/new user ID; passing the same user twice removes its list only once. This includes cached empty lists. Redis deletion failures are reported to the caller, so the integration must not treat a failed publisher as completed invalidation.
-
-Invalidation immediately removes the matching Caffeine and Redis entries on the invoking application instance (Redis is shared by instances). Other instances can retain their process-local Caffeine copies until their maximum lifetime expires; this service does not provide a broadcast for cluster-wide immediate invalidation. An in-flight local read that began before invalidation is prevented from repopulating the invalidated keys on that instance.
+Cache entries in Caffeine and Redis expire after access. Configure the shared expiration with `cache.expiration.hours` (24 hours by default).
 
 Every cache lookup is logged at `INFO` as `HIT` or `MISS` per layer (Caffeine, then Redis). Cache writes are logged at `DEBUG` by the dedicated logger `com.gbp.rcas.cache.write`, so they are off by default; enable them with `logging.level.com.gbp.rcas.cache.write=DEBUG` (or the env var `LOGGING_LEVEL_COM_GBP_RCAS_CACHE_WRITE=DEBUG`).
 

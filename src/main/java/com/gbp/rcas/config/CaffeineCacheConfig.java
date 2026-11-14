@@ -10,8 +10,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.concurrent.TimeUnit;
-import java.time.Clock;
-import java.time.Duration;
 
 import static com.gbp.rcas.config.Constants.CACHE_NAME_USER;
 import static com.gbp.rcas.config.Constants.CACHE_NAME_SUBSCRIPTION;
@@ -36,18 +34,5 @@ public class CaffeineCacheConfig {
                         CACHE_NAME_USER, CACHE_NAME_SUBSCRIPTION);
         cacheManager.setCaffeine(caffeineCacheBuilder);
         return cacheManager;
-    }
-
-    @Bean
-    public Clock cacheClock() {
-        return Clock.systemUTC();
-    }
-
-    @Bean
-    public CachePolicy cachePolicy(
-            @Value("${cache.expiration.hours:24}") long cacheExpirationHours,
-            @Value("${cache.max-lifetime.hours:24}") long maxLifetimeHours,
-            Clock cacheClock) {
-        return new CachePolicy(Duration.ofHours(cacheExpirationHours), Duration.ofHours(maxLifetimeHours), cacheClock);
     }
 }
