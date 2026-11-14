@@ -21,6 +21,14 @@ explicitly bypasses architecture comments and approval, including the `architect
 does not bypass cloud branch/actor verification, PR creation safeguards, CI, PR Review, QA or merge gates. The legacy
 first-line TAG order remains accepted. `LABEL:BACKLOG,TASK-NAME:` retains its backlog behavior and may also have metadata.
 
+For `TAG: cloud-agent`, the current session ends after issue intake: it must not start Architect, Engineer, PR Review or QA
+locally, create a branch or PR, or fall back to local agents if cloud dispatch fails. The `cloud-agent` issue label opts
+the cloud workflow into all later stages, starting with Architect unless `skip-architect` is present. If dispatch fails,
+report the failure and leave the task for cloud automation to retry or for a human to resolve; do not continue the task
+locally. A `backlog` issue remains parked until it is moved to TODO.
+With `TAG: cloud-agent,skip-architect,skip-product-owner`, the main agent creates the issue directly without Product Owner,
+then stops; cloud dispatch skips Architect and starts Engineer directly. PR Review, QA, CI and merge gates still apply.
+
 For the cloud path, the Engineer pushes `feature/<issue-number>-<task-name-slug>`. The isolated `ci-agent-pr-creation.yml`
 workflow runs only from its trusted default-branch five-minute schedule; feature-branch pushes cannot execute its workflow
 YAML with access to `COPILOT_AGENT_TOKEN`. Each scheduled poll itself discovers eligible work: it reads the newest `PushEvent` per `feature/<issue>-*` branch
