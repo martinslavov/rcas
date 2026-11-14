@@ -10,4 +10,8 @@ public interface CacheService {
 
     <T> Flux<T> getCache(Long id, String cacheName, Class<T> cls, Supplier<Flux<T>> retriever);
 
+    Mono<Void> invalidateUser(Long userId);
+
+    Mono<Void> invalidateSubscription(Long subscriptionId, Long oldUserId, Long newUserId);
+
 }

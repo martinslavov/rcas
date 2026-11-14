@@ -2,6 +2,7 @@ package com.gbp.rcas.service.impl;
 
 import com.gbp.rcas.model.Subscription;
 import com.gbp.rcas.model.User;
+import com.gbp.rcas.config.CachePolicy;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,6 +19,9 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.TimeUnit;
@@ -54,7 +58,7 @@ class CacheServiceMetricsTest {
         objectMapper = JsonMapper.builder().build();
         meterRegistry = new SimpleMeterRegistry();
         cacheService = new CacheServiceImpl(cacheManager, hashOperations, redisTemplate, objectMapper,
-                meterRegistry, 24);
+                meterRegistry, policy(24));
     }
 
     @Test
@@ -63,12 +67,13 @@ class CacheServiceMetricsTest {
         meterRegistry = new SimpleMeterRegistry(
                 io.micrometer.core.instrument.simple.SimpleConfig.DEFAULT, clock);
         cacheService = new CacheServiceImpl(cacheManager, hashOperations, redisTemplate, objectMapper,
-                meterRegistry, 24);
+                meterRegistry, policy(24));
         Long id = 41L;
         String redisKey = CACHE_NAME_USER + ":" + id;
         User user = new User.UserBuilder().setId(id).setUsername("timed-user").createUser();
         when(hashOperations.get(redisKey, id)).thenReturn(Mono.empty());
-        when(hashOperations.put(redisKey, id, objectMapper.writeValueAsString(user)))
+        when(hashOperations.put(org.mockito.ArgumentMatchers.eq(redisKey), org.mockito.ArgumentMatchers.eq(id),
+                org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(Mono.fromSupplier(() -> {
                     clock.add(Duration.ofSeconds(5));
                     return true;
@@ -99,7 +104,8 @@ class CacheServiceMetricsTest {
         String redisKey = CACHE_NAME_USER + ":" + id;
         User user = new User.UserBuilder().setId(id).setUsername("cold-warm-user").createUser();
         when(hashOperations.get(redisKey, id)).thenReturn(Mono.empty());
-        when(hashOperations.put(redisKey, id, objectMapper.writeValueAsString(user))).thenReturn(Mono.just(true));
+        when(hashOperations.put(org.mockito.ArgumentMatchers.eq(redisKey), org.mockito.ArgumentMatchers.eq(id),
+                org.mockito.ArgumentMatchers.anyString())).thenReturn(Mono.just(true));
         when(redisTemplate.expire(redisKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
         AtomicInteger databaseCalls = new AtomicInteger();
         Mono<User> result = cacheService.getCache(id, CACHE_NAME_USER, () -> {
@@ -135,7 +141,8 @@ class CacheServiceMetricsTest {
         String redisKey = CACHE_NAME_USER + ":" + id;
         User user = new User.UserBuilder().setId(id).setUsername("redis-error-user").createUser();
         when(hashOperations.get(redisKey, id)).thenReturn(Mono.error(new IllegalStateException("Redis down")));
-        when(hashOperations.put(redisKey, id, objectMapper.writeValueAsString(user)))
+        when(hashOperations.put(org.mockito.ArgumentMatchers.eq(redisKey), org.mockito.ArgumentMatchers.eq(id),
+                org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(Mono.just(true));
         when(redisTemplate.expire(redisKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
 
@@ -157,7 +164,7 @@ class CacheServiceMetricsTest {
         Long id = 40L;
         String redisKey = CACHE_NAME_USER + ":" + id;
         User user = new User.UserBuilder().setId(id).setUsername("redis-hit-user").createUser();
-        when(hashOperations.get(redisKey, id)).thenReturn(Mono.just(objectMapper.writeValueAsString(user)));
+        when(hashOperations.get(redisKey, id)).thenReturn(Mono.just(cacheJson(user)));
         when(redisTemplate.expire(redisKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
         AtomicInteger databaseCalls = new AtomicInteger();
 
@@ -179,7 +186,8 @@ class CacheServiceMetricsTest {
         Long id = -25L;
         String redisKey = CACHE_NAME_SUBSCRIPTION + ":" + id;
         when(hashOperations.get(redisKey, id)).thenReturn(Mono.empty());
-        when(hashOperations.put(redisKey, id, "[]")).thenReturn(Mono.just(true));
+        when(hashOperations.put(org.mockito.ArgumentMatchers.eq(redisKey), org.mockito.ArgumentMatchers.eq(id),
+                org.mockito.ArgumentMatchers.anyString())).thenReturn(Mono.just(true));
         when(redisTemplate.expire(redisKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
 
         Flux<Subscription> result = cacheService.getCache(id, CACHE_NAME_SUBSCRIPTION, Subscription.class,
@@ -202,9 +210,10 @@ class CacheServiceMetricsTest {
     @Test
     void recordsDatabaseErrorsAndListCancellationWithoutFalseSuccessfulLogicalReads() {
         Long id = -26L;
-        cacheManager.getCache(CACHE_NAME_SUBSCRIPTION).put(id, List.of(
+        cacheManager.getCache(CACHE_NAME_SUBSCRIPTION).put(id, new CacheEntry(Clock.fixed(
+                Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC).millis(), List.of(
                 new Subscription(1L, "first", 1, 1),
-                new Subscription(2L, "second", 1, 1)));
+                new Subscription(2L, "second", 1, 1))));
         when(redisTemplate.expire(CACHE_NAME_SUBSCRIPTION + ":" + id, CACHE_EXPIRATION))
                 .thenReturn(Mono.just(true));
 
@@ -247,7 +256,8 @@ class CacheServiceMetricsTest {
 
         Long cancelledId = 37L;
         User user = new User.UserBuilder().setId(cancelledId).setUsername("cancelled-user").createUser();
-        cacheManager.getCache(CACHE_NAME_USER).put(cancelledId, user);
+        cacheManager.getCache(CACHE_NAME_USER).put(cancelledId, new CacheEntry(Clock.fixed(
+                Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC).millis(), user));
         when(redisTemplate.expire(CACHE_NAME_USER + ":" + cancelledId, CACHE_EXPIRATION))
                 .thenReturn(Mono.never());
         StepVerifier.create(cacheService.getCache(cancelledId, CACHE_NAME_USER, Mono::empty, User.class), 0)
@@ -291,7 +301,8 @@ class CacheServiceMetricsTest {
         String redisKey = CACHE_NAME_USER + ":" + id;
         User user = new User.UserBuilder().setId(id).setUsername("write-failure-user").createUser();
         when(hashOperations.get(redisKey, id)).thenReturn(Mono.empty());
-        when(hashOperations.put(redisKey, id, objectMapper.writeValueAsString(user)))
+        when(hashOperations.put(org.mockito.ArgumentMatchers.eq(redisKey), org.mockito.ArgumentMatchers.eq(id),
+                org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(Mono.error(new IllegalStateException("Redis write failed")));
         when(redisTemplate.expire(redisKey, CACHE_EXPIRATION))
                 .thenReturn(Mono.error(new IllegalStateException("Redis TTL failed")));
@@ -307,7 +318,8 @@ class CacheServiceMetricsTest {
         assertEquals(1, metricCount("rcas.cache.logical.read", "cache", CACHE_NAME_USER,
                 "operation", "item", "source", "database", "outcome", "success"));
 
-        cacheManager.getCache(CACHE_NAME_USER).put(34L, user);
+        cacheManager.getCache(CACHE_NAME_USER).put(34L, new CacheEntry(Clock.fixed(
+                Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC).millis(), user));
         StepVerifier.create(cacheService.getCache(34L, CACHE_NAME_USER, Mono::empty, User.class))
                 .expectNext(user)
                 .verifyComplete();
@@ -322,5 +334,16 @@ class CacheServiceMetricsTest {
         }
         Counter counter = meterRegistry.find(name).tags(tags).counter();
         return counter == null ? 0 : (long) counter.count();
+    }
+
+    private String cacheJson(Object value) throws Exception {
+        return objectMapper.writeValueAsString(new CacheEntryEnvelope(
+                Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC).millis(),
+                objectMapper.writeValueAsString(value)));
+    }
+
+    private CachePolicy policy(long maxLifetimeHours) {
+        return new CachePolicy(Duration.ofHours(24), Duration.ofHours(maxLifetimeHours),
+                Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC));
     }
 }

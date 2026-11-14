@@ -2,6 +2,7 @@ package com.gbp.rcas.service.impl;
 
 import com.gbp.rcas.model.Subscription;
 import com.gbp.rcas.model.User;
+import com.gbp.rcas.config.CachePolicy;
 
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
@@ -21,6 +22,9 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -47,6 +51,7 @@ class CacheServiceImplTest {
     private ObjectMapper objectMapper;
     private CacheServiceImpl cacheService;
     private SimpleMeterRegistry meterRegistry;
+    private Clock clock;
 
     @BeforeEach
     @SuppressWarnings("unchecked")
@@ -56,15 +61,16 @@ class CacheServiceImplTest {
         redisTemplate = mock(ReactiveRedisTemplate.class);
         objectMapper = JsonMapper.builder().build();
         meterRegistry = new SimpleMeterRegistry();
+        clock = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
         cacheService = new CacheServiceImpl(cacheManager, hashOperations, redisTemplate, objectMapper,
-                meterRegistry, 24);
+                meterRegistry, new CachePolicy(Duration.ofHours(24), Duration.ofHours(24), clock));
     }
 
     @Test
     void refreshesRedisExpirationOnL1HitWithoutReadingRedisOrDatabase() {
         User user = new User.UserBuilder().setId(1L).setUsername("cached-user").createUser();
         String redisKey = CACHE_NAME_USER + ":1";
-        cacheManager.getCache(CACHE_NAME_USER).put(1L, user);
+        cacheManager.getCache(CACHE_NAME_USER).put(1L, new CacheEntry(clock.millis(), user));
         when(redisTemplate.expire(redisKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
         AtomicInteger databaseCalls = new AtomicInteger();
 
@@ -86,7 +92,8 @@ class CacheServiceImplTest {
         Long id = -1L;
         String redisKey = CACHE_NAME_SUBSCRIPTION + ":" + id;
         Subscription subscription = new Subscription(4L, "premium", 1, 1);
-        cacheManager.getCache(CACHE_NAME_SUBSCRIPTION).put(id, List.of(subscription));
+        cacheManager.getCache(CACHE_NAME_SUBSCRIPTION).put(id,
+                new CacheEntry(clock.millis(), List.of(subscription)));
         when(redisTemplate.expire(redisKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
         AtomicInteger databaseCalls = new AtomicInteger();
 
@@ -107,7 +114,7 @@ class CacheServiceImplTest {
     void promotesRedisHitToL1() throws Exception {
         User user = new User.UserBuilder().setId(2L).setUsername("redis-user").createUser();
         when(hashOperations.get(CACHE_NAME_USER + ":2", 2L))
-                .thenReturn(Mono.just(objectMapper.writeValueAsString(user)));
+                .thenReturn(Mono.just(cacheJson(user)));
         when(redisTemplate.expire(CACHE_NAME_USER + ":2", CACHE_EXPIRATION)).thenReturn(Mono.just(true));
 
         Mono<User> firstRead = cacheService.getCache(2L, CACHE_NAME_USER, Mono::empty, User.class);
@@ -129,7 +136,8 @@ class CacheServiceImplTest {
         User user = new User.UserBuilder().setId(3L).setUsername("database-user").createUser();
         AtomicInteger databaseCalls = new AtomicInteger();
         when(hashOperations.get(CACHE_NAME_USER + ":3", 3L)).thenReturn(Mono.empty());
-        when(hashOperations.put(CACHE_NAME_USER + ":3", 3L, objectMapper.writeValueAsString(user)))
+        when(hashOperations.put(org.mockito.ArgumentMatchers.eq(CACHE_NAME_USER + ":3"),
+                org.mockito.ArgumentMatchers.eq(3L), org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(Mono.just(true));
         when(redisTemplate.expire(CACHE_NAME_USER + ":3", CACHE_EXPIRATION)).thenReturn(Mono.just(true));
 
@@ -146,7 +154,8 @@ class CacheServiceImplTest {
         StepVerifier.create(secondRead).expectNext(user).verifyComplete();
 
         assertEquals(1, databaseCalls.get());
-        verify(hashOperations).put(CACHE_NAME_USER + ":3", 3L, objectMapper.writeValueAsString(user));
+        verify(hashOperations).put(org.mockito.ArgumentMatchers.eq(CACHE_NAME_USER + ":3"),
+                org.mockito.ArgumentMatchers.eq(3L), org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test
@@ -155,8 +164,9 @@ class CacheServiceImplTest {
         List<Subscription> subscriptions = List.of(subscription);
         AtomicInteger databaseCalls = new AtomicInteger();
         when(hashOperations.get(CACHE_NAME_SUBSCRIPTION + ":-1", -1L)).thenReturn(Mono.empty());
-        when(hashOperations.put(CACHE_NAME_SUBSCRIPTION + ":-1", -1L,
-                objectMapper.writeValueAsString(subscriptions))).thenReturn(Mono.just(true));
+        when(hashOperations.put(org.mockito.ArgumentMatchers.eq(CACHE_NAME_SUBSCRIPTION + ":-1"),
+                org.mockito.ArgumentMatchers.eq(-1L),
+                org.mockito.ArgumentMatchers.anyString())).thenReturn(Mono.just(true));
         when(redisTemplate.expire(CACHE_NAME_SUBSCRIPTION + ":-1", CACHE_EXPIRATION)).thenReturn(Mono.just(true));
 
         Flux<Subscription> firstRead = cacheService.getCache(-1L, CACHE_NAME_SUBSCRIPTION, Subscription.class, () -> {
@@ -170,8 +180,8 @@ class CacheServiceImplTest {
         StepVerifier.create(secondRead).expectNext(subscription).verifyComplete();
 
         assertEquals(1, databaseCalls.get());
-        verify(hashOperations).put(CACHE_NAME_SUBSCRIPTION + ":-1", -1L,
-                objectMapper.writeValueAsString(subscriptions));
+        verify(hashOperations).put(org.mockito.ArgumentMatchers.eq(CACHE_NAME_SUBSCRIPTION + ":-1"),
+                org.mockito.ArgumentMatchers.eq(-1L), org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test
@@ -179,7 +189,7 @@ class CacheServiceImplTest {
         Subscription subscription = new Subscription(6L, "standard", 1, 2);
         String redisKey = CACHE_NAME_SUBSCRIPTION + ":-2";
         when(hashOperations.get(redisKey, -2L))
-                .thenReturn(Mono.just(objectMapper.writeValueAsString(List.of(subscription))));
+                .thenReturn(Mono.just(cacheJson(List.of(subscription))));
         when(redisTemplate.expire(redisKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
 
         Flux<Subscription> result = cacheService.getCache(-2L, CACHE_NAME_SUBSCRIPTION, Subscription.class,
@@ -196,7 +206,8 @@ class CacheServiceImplTest {
         User user = new User.UserBuilder().setId(5L).setUsername("fallback-user").createUser();
         when(hashOperations.get(CACHE_NAME_USER + ":5", 5L))
                 .thenReturn(Mono.error(new IllegalStateException("Redis down")));
-        when(hashOperations.put(CACHE_NAME_USER + ":5", 5L, objectMapper.writeValueAsString(user)))
+        when(hashOperations.put(org.mockito.ArgumentMatchers.eq(CACHE_NAME_USER + ":5"),
+                org.mockito.ArgumentMatchers.eq(5L), org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(Mono.just(true));
         when(redisTemplate.expire(CACHE_NAME_USER + ":5", CACHE_EXPIRATION)).thenReturn(Mono.just(true));
 
@@ -232,7 +243,7 @@ class CacheServiceImplTest {
     void logsRedisHitAndThenCaffeineHitAtInfo() throws Exception {
         User user = new User.UserBuilder().setId(8L).setUsername("redis-user").createUser();
         String redisKey = CACHE_NAME_USER + ":8";
-        when(hashOperations.get(redisKey, 8L)).thenReturn(Mono.just(objectMapper.writeValueAsString(user)));
+        when(hashOperations.get(redisKey, 8L)).thenReturn(Mono.just(cacheJson(user)));
         when(redisTemplate.expire(redisKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
         CapturedLogger captured = captureLogger(CacheServiceImpl.class.getName(), Level.INFO);
 
@@ -265,7 +276,8 @@ class CacheServiceImplTest {
         Subscription subscription = new Subscription(17L, "premium", 1, 1);
         String redisKey = CACHE_NAME_SUBSCRIPTION + ":-7";
         when(hashOperations.get(redisKey, id)).thenReturn(Mono.empty());
-        when(hashOperations.put(redisKey, id, objectMapper.writeValueAsString(List.of(subscription))))
+        when(hashOperations.put(org.mockito.ArgumentMatchers.eq(redisKey),
+                org.mockito.ArgumentMatchers.eq(id), org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(Mono.just(true));
         when(redisTemplate.expire(redisKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
         CapturedLogger captured = captureLogger(CacheServiceImpl.class.getName(), Level.INFO);
@@ -295,7 +307,7 @@ class CacheServiceImplTest {
         Subscription subscription = new Subscription(18L, "premium", 1, 1);
         String redisKey = CACHE_NAME_SUBSCRIPTION + ":-8";
         when(hashOperations.get(redisKey, id))
-                .thenReturn(Mono.just(objectMapper.writeValueAsString(List.of(subscription))));
+                .thenReturn(Mono.just(cacheJson(List.of(subscription))));
         when(redisTemplate.expire(redisKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
         CapturedLogger captured = captureLogger(CacheServiceImpl.class.getName(), Level.INFO);
 
@@ -328,7 +340,8 @@ class CacheServiceImplTest {
         String firstKey = CACHE_NAME_USER + ":9";
         User firstUser = new User.UserBuilder().setId(9L).setUsername("database-user").createUser();
         when(hashOperations.get(firstKey, 9L)).thenReturn(Mono.empty());
-        when(hashOperations.put(firstKey, 9L, objectMapper.writeValueAsString(firstUser)))
+        when(hashOperations.put(org.mockito.ArgumentMatchers.eq(firstKey),
+                org.mockito.ArgumentMatchers.eq(9L), org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(Mono.just(true));
         when(redisTemplate.expire(firstKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
 
@@ -343,7 +356,8 @@ class CacheServiceImplTest {
             String secondKey = CACHE_NAME_USER + ":10";
             User secondUser = new User.UserBuilder().setId(10L).setUsername("database-user").createUser();
             when(hashOperations.get(secondKey, 10L)).thenReturn(Mono.empty());
-            when(hashOperations.put(secondKey, 10L, objectMapper.writeValueAsString(secondUser)))
+            when(hashOperations.put(org.mockito.ArgumentMatchers.eq(secondKey),
+                    org.mockito.ArgumentMatchers.eq(10L), org.mockito.ArgumentMatchers.anyString()))
                     .thenReturn(Mono.just(true));
             when(redisTemplate.expire(secondKey, CACHE_EXPIRATION)).thenReturn(Mono.just(true));
 
@@ -377,6 +391,11 @@ class CacheServiceImplTest {
         logger.addAppender(appender);
         logger.setLevel(level);
         return new CapturedLogger(logger, previousLevel, appender);
+    }
+
+    private String cacheJson(Object value) throws Exception {
+        return objectMapper.writeValueAsString(new CacheEntryEnvelope(clock.millis(),
+                objectMapper.writeValueAsString(value)));
     }
 
     private record CapturedLogger(org.apache.logging.log4j.core.Logger logger,
