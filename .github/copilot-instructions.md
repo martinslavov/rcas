@@ -122,7 +122,8 @@ Engineer → `/create-pr-cloud` → PR Review → QA → merge → elapsed time 
 1. Unless `skip-product-owner` is present, delegate the whole input to `product-owner-agent`. It returns the issue number,
    URL and the branch name. With `skip-product-owner`, parse the input with `.github/scripts/task_input.py` and create the
    issue directly using the parsed task name, description and labels; do not invoke Product Owner. For `local-agent` or
-   `cloud-agent`, report the issue URL and stop here; do not proceed to step 2 or any later step in this session. A cloud
+   `cloud-agent`, report
+   the issue URL and stop here; do not proceed to step 2 or any later step in this session. A cloud
    dispatch failure is reported, never treated as permission to continue locally.
 2. Unless `skip-architect` is present, delegate the issue to `architect-agent`. It posts exactly one design note comment containing
    `<!-- architect-design-note -->` with affected components, interfaces/contracts, data/migrations, risks/mitigations,
