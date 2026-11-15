@@ -16,14 +16,25 @@ task input starts with `TASK-NAME:<name>`, optionally followed by `DEVELOPMENT: 
 `TAG: cloud-agent,local-agent,skip-architect,skip-product-owner` (any supported subset; do not combine the two worker labels), then a description (optionally introduced by
 `DESCRIPTION:`). `.github/scripts/task_input.py` consumes this metadata; `DEVELOPMENT` becomes a `development:<level>`
 issue label, and control lines are never copied into the issue title/body. `skip-product-owner` tells the main agent to
-create a concise task issue directly instead of invoking Product Owner. `skip-architect` lets the selected flow start Engineer directly and
-explicitly bypasses architecture comments and approval, including the `architecture-approval-required` gate. This opt-out
-does not bypass cloud branch/actor verification, PR creation safeguards, CI, PR Review, QA or merge gates. The legacy
+create a concise task issue directly instead of invoking Product Owner. Product Owner intake writes exactly one
+`<!-- architecture-assessment: required|not-required|uncertain -->` marker and a visible decision/rationale section into
+the issue body. The `### Architecture assessment` section must contain a `Decision: <value>` line matching the marker
+and a meaningful, non-placeholder `Rationale: <text>` line; the issue-form defaults are pending placeholders, not a valid
+assessment. Missing/duplicate markers, a missing or duplicated section, a mismatched decision, or an empty/placeholder
+rationale are invalid and fail safe to Architect.
+Public HTTP API, database schema/migrations, messaging, security, new components/layers, cache-topology changes, or
+uncertain scope require Architect. Only narrow, low-risk work that changes none of those areas or configuration and adds
+no dependency with meaningful security, compatibility, or architectural risk may be marked `not-required`.
+`skip-architect` remains an explicit user opt-out and lets the selected flow start Engineer directly, bypassing
+architecture comments and approval, including the `architecture-approval-required` gate. This opt-out does not bypass
+cloud branch/actor verification, PR creation safeguards, CI, PR Review, QA or merge gates. The legacy
 first-line TAG order remains accepted. `LABEL:BACKLOG,TASK-NAME:` retains its backlog behavior and may also have metadata.
 
 For `TAG: cloud-agent`, the current session ends after issue intake: it must not start Architect, Engineer, PR Review or QA
 locally, create a branch or PR, or fall back to local agents if cloud dispatch fails. The `cloud-agent` issue label opts
-the cloud workflow into all later stages, starting with Architect unless `skip-architect` is present. If dispatch fails,
+the cloud workflow into all later stages, starting with Architect when the Product Owner assessment is `required`,
+`uncertain`, absent or invalid, unless `skip-architect` is present. A valid `not-required` assessment starts Engineer
+directly. If dispatch fails,
 report the failure and leave the task for cloud automation to retry or for a human to resolve; do not continue the task
 locally. A `backlog` issue remains parked until it is moved to TODO.
 With `TAG: cloud-agent,skip-architect,skip-product-owner`, the main agent creates the issue directly without Product Owner,
@@ -48,7 +59,11 @@ For local work or work with an existing implementation branch but no cloud issue
 create/reuse the task issue and PR and start directly at PR Review. That skill uses the same PR template, relation and marker.
 Its guarded intake records the PR head SHA and start marker. The PR label starts review without re-running Architect or Engineer:
 
-1. `architect-agent` posts a design note or auditable skip. If approval is required, the workflow waits for the repository
+1. If Product Owner marked the task `required`, `uncertain`, or omitted a valid assessment, `architect-agent` posts a
+   design note or auditable skip. A valid `not-required` assessment starts Engineer directly. If implementation reveals
+   architectural scope that was not identified at intake, Engineer transitions `implementation → architecture` and posts
+   `<!-- architecture-review-requested -->`; the dispatcher reassigns Architect, then resumes Engineer with a distinct
+   per-review dispatch marker. If approval is required, the workflow waits for the repository
    owner to post `<!-- architecture-approved -->` with `Approved by @<owner> at <UTC timestamp>`; otherwise it dispatches
    the Engineer after the note. With `skip-architect`, it dispatches Engineer directly and the explicit label bypasses
    this architecture approval gate.
@@ -106,8 +121,10 @@ exclusive, and the worker rejects issues authored by anyone other than `martinsl
 After issue creation, the current session reports the issue URL and stops without invoking or waiting for the worker or
 any implementation, review or QA agent. This handoff applies regardless of skip tags: `skip-product-owner` makes the
 current session create the issue directly, and `skip-architect` makes the worker start Engineer without Architect or
-architecture approval. The worker must be started separately; the issue waits if it is not running or its task-state
-record is not yet available. Backlog tasks remain parked.
+architecture approval. Product Owner `not-required` assessments also start Engineer directly. Missing or invalid assessments start
+Architect. If Engineer requests a reassessment, the worker runs Architect again before resuming Engineer; an
+`approval-pending` task remains parked until the owner approval is recorded. The worker must be started separately; the
+issue waits if it is not running or its task-state record is not yet available. Backlog tasks remain parked.
 Use `/create-issue` for Product Owner intake only, then implement the TODO issue yourself. The no-task-issue shortcut is
 `/create-pr-local`; it creates a PR directly and does not create the automatic PR tracking issue.
 

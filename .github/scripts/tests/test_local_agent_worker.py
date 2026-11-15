@@ -15,6 +15,7 @@ from local_agent_worker import (
     task_slug,
     task_state,
 )
+from architecture_assessment import REASSESSMENT_MARKER
 
 
 class LocalAgentWorkerTest(unittest.TestCase):
@@ -171,6 +172,59 @@ class LocalAgentWorkerTest(unittest.TestCase):
         )
         run_agent.assert_not_called()
 
+    def test_not_required_assessment_hands_todo_directly_to_engineer(self):
+        worker = LocalAgentWorker(Path.cwd(), poll_seconds=60, max_rounds=5)
+        issue = {
+            "number": 41,
+            "body": (
+                "### Architecture assessment\n"
+                "<!-- architecture-assessment: not-required -->\n"
+                "Decision: not-required\n"
+                "Rationale: Narrow task with no architectural impact."
+            ),
+        }
+        with (
+            patch.object(worker, "run_agent") as run_agent,
+            patch.object(worker, "orchestrator", return_value={"state": "implementation"}) as orchestrator,
+        ):
+            result = worker.advance_to_implementation(
+                issue, {"local-agent"}, [], {"state": "todo"}, "session", Path("/tmp/worktree"),
+            )
+
+        self.assertEqual("implementation", result["state"])
+        orchestrator.assert_called_once_with(
+            "transition", "41", "implementation", "--agent", "senior-java-software-engineer",
+        )
+        run_agent.assert_not_called()
+
+    def test_architecture_reassessment_runs_architect_even_if_initial_assessment_was_not_required(self):
+        worker = LocalAgentWorker(Path.cwd(), poll_seconds=60, max_rounds=5)
+        issue = {
+            "number": 41,
+            "body": (
+                "### Architecture assessment\n"
+                "<!-- architecture-assessment: not-required -->\n"
+                "Decision: not-required\n"
+                "Rationale: Narrow task with no architectural impact."
+            ),
+            "labels": [{"name": "local-agent"}],
+        }
+        comments = [{"body": REASSESSMENT_MARKER}]
+        with (
+            patch.object(worker, "issue_details", return_value=(issue, comments)),
+            patch.object(worker, "comments_and_state", return_value=(
+                [{"body": "<!-- architect-design-note -->"}], {"state": "implementation"},
+            )),
+            patch.object(worker, "run_agent") as run_agent,
+        ):
+            result = worker.advance_to_implementation(
+                issue, {"local-agent"}, comments, {"state": "architecture"},
+                "session", Path("/tmp/worktree"),
+            )
+
+        self.assertEqual("implementation", result["state"])
+        self.assertEqual("architect-agent", run_agent.call_args.args[0])
+
     def test_worker_runs_engineer_in_worktree_after_skipped_architecture(self):
         worker = LocalAgentWorker(Path.cwd(), poll_seconds=60, max_rounds=5)
         issue = {
@@ -201,6 +255,57 @@ class LocalAgentWorkerTest(unittest.TestCase):
         self.assertEqual(worktree, run_agent.call_args.args[2])
         self.assertEqual((issue, 77, worktree, "issue-41", 123), finish_pr.call_args.args[:5])
         self.assertEqual("pr-review", finish_pr.call_args.args[-1])
+
+    def test_worker_rechecks_architecture_if_engineer_escalates_scope(self):
+        worker = LocalAgentWorker(Path.cwd(), poll_seconds=60, max_rounds=5)
+        issue = {
+            "number": 41,
+            "title": "Task",
+            "body": (
+                "### Architecture assessment\n"
+                "<!-- architecture-assessment: not-required -->\n"
+                "Decision: not-required\n"
+                "Rationale: Narrow task with no architectural impact."
+            ),
+            "labels": [{"name": "local-agent"}],
+        }
+        worktree = Path("/tmp/rcas-issue-41")
+        comments_and_states = [
+            ([], {"state": "todo"}),
+            ([{"body": REASSESSMENT_MARKER}], {"state": "architecture"}),
+            ([{"body": "<!-- architect-design-note -->"}], {"state": "implementation"}),
+            ([{"body": "<!-- architect-design-note -->"}], {"state": "implementation"}),
+        ]
+        agents = []
+
+        with (
+            patch.object(worker, "issue_details", return_value=(
+                issue, [{"body": REASSESSMENT_MARKER}],
+            )),
+            patch.object(worker, "comments_and_state", side_effect=comments_and_states),
+            patch.object(worker, "record_start", return_value=123),
+            patch.object(worker, "prepare_worktree", return_value=(
+                worktree, "feature/issue-41-task", "issue-41",
+            )),
+            patch("local_agent_worker._run", return_value="[]"),
+            patch.object(worker, "orchestrator", side_effect=[
+                {"state": "implementation"}, {},
+            ]),
+            patch.object(worker, "run_agent", side_effect=lambda agent, *_: agents.append(agent)),
+            patch.object(worker, "verify_pushed_branch"),
+            patch.object(worker, "create_or_reuse_pr", return_value=77),
+            patch.object(worker, "pr_info", return_value={"head": {"sha": "a" * 40}}),
+            patch.object(worker, "set_pending_statuses"),
+            patch.object(worker, "finish_pr") as finish_pr,
+        ):
+            worker.run_issue(41)
+
+        self.assertEqual([
+            "senior-java-software-engineer",
+            "architect-agent",
+            "senior-java-software-engineer",
+        ], agents)
+        finish_pr.assert_called_once()
 
     def test_creates_worktree_before_architecture_and_runs_architect_there(self):
         worker = LocalAgentWorker(Path.cwd(), poll_seconds=60, max_rounds=5)

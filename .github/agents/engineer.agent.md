@@ -22,25 +22,36 @@ task PRs through guarded cloud automation or the interactive task coordinator.
 ## Process
 
 1. Read the issue (`gh issue view <n> -R martinslavov/rcas`), all its comments, acceptance criteria and relevant code.
-   Unless the issue has `skip-architect`, read the Architect's comment containing `<!-- architect-design-note -->`, or
-   confirm the auditable skip comment containing `<!-- architect-skipped -->` and `skipped: <reason>`. With
-   `skip-architect`, the user has explicitly opted out of the Architect review and its approval gate, including when
-   `architecture-approval-required` is also present. Ask the user only if a requirement is unclear and cannot be inferred.
+   Read the issue's `<!-- architecture-assessment: ... -->` marker. Unless the issue has `skip-architect`, require an
+   Architect design/skip comment when the assessment is `required`, `uncertain`, missing or malformed. For
+   `not-required`, no initial Architect comment is expected. With `skip-architect`, the user has explicitly opted out of
+   the Architect review and its approval gate, including when `architecture-approval-required` is present; never infer
+   this opt-out from a `not-required` assessment.
 2. Before creating a branch or implementing, check whether the issue has the label `architecture-approval-required`.
    If it does and `skip-architect` is absent, proceed only if the issue comments also contain
-   `<!-- architecture-approved -->` recording the user's explicit approval, who approved and when. Otherwise stop and
-   return the design note for approval; do not create a branch or make implementation changes. For a `cloud-agent` cloud
+   `<!-- architecture-approved -->` recording the user's explicit approval, who approved and when. If the task state is
+   `approval-pending`, transition it to `implementation` with this agent id only after verifying that owner-authored
+   approval. Otherwise stop and return the design note for approval; do not create a branch or make implementation changes.
+   For a `cloud-agent` cloud
    issue, use `feature/<issue-number>-<task-name-slug>` so the trusted PR-creation workflow can verify the branch-to-issue
    association; local branches retain `feature/<task-name>`.
 3. Create the branch from an up to date `main`: `cloud-agent` issues use the exact `feature/<issue-number>-<task-name-slug>`
    branch; local tasks use `feature/<task-name>`. Only `feature/*` and `hotfix/*` branches can be created. Never work on or
    push to `main`.
-   For a `skip-architect` issue initially in `todo`, transition directly to `implementation` with this agent id before
-   implementing. The orchestrator permits this edge only when the issue carries `skip-architect`. State transitions:
+   For an issue initially in `todo` with `skip-architect` or a valid `not-required` Product Owner assessment, transition
+   directly to `implementation` with this agent id before implementing. The orchestrator permits this edge only when
+   the opt-out label is present or the issue assessment is exactly `not-required`. State transitions:
    the `/create-pr-cloud` intake records `implementation → pr-review` after the PR exists; use `merge → done`
    only after verifying the merge, with this agent id.
 4. Implement the smallest change that satisfies every acceptance criterion; follow the existing package structure
    `com.gbp.rcas` and conventions. Do not make unrelated changes.
+   If implementation reveals a public HTTP API, database schema/migration, messaging, security, new component/layer,
+   cache-topology change, or otherwise uncertain architectural impact, stop before implementing that scope unless
+   `skip-architect` is present. For an issue in `implementation` state, run
+   `python3 .github/scripts/orchestrator.py transition <issue> architecture --agent senior-java-software-engineer`,
+   then post an issue comment containing `<!-- architecture-review-requested -->` and a concise explanation of the
+   discovered scope. Do not commit or push this assignment; return control so Architect can review, request approval if
+   needed, and hand the task back. A `not-required` assessment is not permission to bypass this escalation.
 5. Add or update tests for the new behavior. Add a component or sanity test when the HTTP behavior changes.
 6. Verify before committing (JDK 25, e.g. `JAVA_HOME=/Users/slavomar/Library/Java/JavaVirtualMachines/openjdk-25.0.2/Contents/Home`):
    - `./gradlew build` (includes the JaCoCo coverage gate; unit and integration tests, Checkstyle is part of the CI Static Review:

@@ -55,6 +55,15 @@ body:
     validations:
       required: true
   - type: textarea
+    id: architecture-assessment
+    attributes:
+      label: Architecture assessment
+      description: Product Owner intake replaces the default decision and rationale. If no valid Product Owner assessment is present, Architect review is required.
+      value: |
+        <!-- architecture-assessment: uncertain -->
+        Decision: uncertain
+        Rationale: Pending Product Owner assessment.
+  - type: textarea
     id: relations
     attributes:
       label: Relations

@@ -13,6 +13,7 @@ from copilot_agent_automation import (
     get_dispatches,
     merge_if_ready,
 )
+from architecture_assessment import REASSESSMENT_MARKER
 
 
 class FakeGitHub:
@@ -137,6 +138,110 @@ class CopilotDispatchTest(unittest.TestCase):
         self.assertEqual(
             [Dispatch("issue", 42, "architect-agent")],
             get_dispatches("issues", event, FakeGitHub()),
+        )
+
+    def test_not_required_assessment_starts_engineer_directly(self):
+        api = FakeGitHub()
+        api.issue["body"] = (
+            "### Architecture assessment\n"
+            "<!-- architecture-assessment: not-required -->\n"
+            "Decision: not-required\n"
+            "Rationale: Narrow task with no architectural impact."
+        )
+        event = {
+            "action": "labeled",
+            "label": {"name": ENTRY_LABEL},
+            "issue": api.issue,
+        }
+
+        self.assertEqual(
+            [Dispatch("issue", 42, "senior-java-software-engineer")],
+            get_dispatches("issues", event, api),
+        )
+
+    def test_reassessment_state_returns_to_architect_then_resumes_engineer(self):
+        api = FakeGitHub()
+        api.issue["body"] = (
+            "### Architecture assessment\n"
+            "<!-- architecture-assessment: not-required -->\n"
+            "Decision: not-required\n"
+            "Rationale: Narrow task with no architectural impact."
+        )
+        request = {
+            "body": REASSESSMENT_MARKER,
+            "user": {"login": "copilot-swe-agent[bot]"},
+        }
+        event = {
+            "action": "created",
+            "issue": api.issue,
+            "comment": request,
+        }
+        api.issue_comments = [
+            {"body": '<!-- task-state: {"issue": 42, "state": "architecture"} -->'},
+            request,
+        ]
+
+        self.assertEqual(
+            [Dispatch("issue", 42, "architect-agent", cycle=1)],
+            get_dispatches("issue_comment", event, api),
+        )
+
+        api.issue_comments[0] = {
+            "body": '<!-- task-state: {"issue": 42, "state": "implementation"} -->',
+        }
+        self.assertEqual(
+            [Dispatch("issue", 42, "senior-java-software-engineer", cycle=1)],
+            get_dispatches("issue_comment", event, api),
+        )
+
+    def test_reassessment_requires_new_approval_after_latest_architect_note(self):
+        api = FakeGitHub()
+        request = {
+            "body": REASSESSMENT_MARKER,
+            "user": {"login": "copilot-swe-agent[bot]"},
+        }
+        latest_note = {
+            "body": "<!-- architect-design-note -->\nApproval required: yes",
+            "user": {"login": "copilot-swe-agent[bot]"},
+        }
+        old_note = {
+            "body": "<!-- architect-design-note -->\nApproval required: yes",
+            "user": {"login": "copilot-swe-agent[bot]"},
+        }
+        old_approval = {
+            "body": (
+                "<!-- architecture-approved --> "
+                "Approved by @martinslavov at 2026-11-10T12:00:00Z"
+            ),
+            "user": {"login": api.owner},
+        }
+        api.issue_comments = [
+            {"body": '<!-- task-state: {"issue": 42, "state": "approval-pending"} -->'},
+            old_note,
+            old_approval,
+            request,
+            latest_note,
+        ]
+        event = {
+            "action": "created",
+            "issue": api.issue,
+            "comment": latest_note,
+        }
+
+        self.assertEqual([], get_dispatches("issue_comment", event, api))
+
+        new_approval = {
+            "body": (
+                "<!-- architecture-approved --> "
+                "Approved by @martinslavov at 2026-11-11T12:00:00Z"
+            ),
+            "user": {"login": api.owner},
+        }
+        api.issue_comments.append(new_approval)
+        event["comment"] = new_approval
+        self.assertEqual(
+            [Dispatch("issue", 42, "senior-java-software-engineer", cycle=1)],
+            get_dispatches("issue_comment", event, api),
         )
 
     def test_skip_architect_dispatches_engineer_without_architecture_comments(self):

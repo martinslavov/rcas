@@ -28,8 +28,10 @@ report that the user opted out and return control to the caller.
 1. Read the issue, acceptance criteria, relevant repository documentation and code. Do not change code or start implementation.
 2. Decide whether the task needs an architecture design note or meets one of the explicit skip criteria below. A skipped
    task still gets an auditable issue comment containing `<!-- architect-skipped -->` and the exact matching criterion,
-   formatted as `skipped: <reason>`.
-3. For a task that is not skipped, post exactly one issue comment containing `<!-- architect-design-note -->` and these
+   formatted as `skipped: <reason>`. If the issue contains `<!-- architecture-review-requested -->`, reassess the newly
+   discovered scope even if the original Product Owner assessment was `not-required`; post a new design note for this
+   review and do not reuse an earlier approval for materially changed scope.
+3. For a task that is not skipped, post one issue comment for this review containing `<!-- architect-design-note -->` and these
    sections:
    - **Affected components** — concrete packages, classes, files or services.
    - **Interfaces & contracts** — affected HTTP endpoints, configuration properties, events or other contracts, including

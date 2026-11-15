@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterator
 
+from architecture_assessment import has_current_approval, reassessment_count, requires_architect
 from copilot_agent_automation import (
     HUMAN_REVIEW_LABEL,
     REQUIRED_CHECKS,
@@ -33,8 +34,6 @@ CLOUD_LABEL = "cloud-agent"
 SKIP_ARCHITECT_LABEL = "skip-architect"
 APPROVAL_LABEL = "architecture-approval-required"
 START_MARKER = re.compile(r"<!-- agent-automation-start:(\d+) -->")
-APPROVAL_MARKER = "<!-- architecture-approved -->"
-APPROVAL_DETAILS = re.compile(r"Approved by @[A-Za-z0-9-]+ at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 TASK_STATE_MARKER = re.compile(r"<!-- task-state: (\{.*?\}) -->", re.DOTALL)
 AGENTS = {
     "architect-agent": "architect-agent",
@@ -119,12 +118,7 @@ def task_slug(title: str) -> str:
 
 
 def _approval_is_present(comments: list[dict[str, Any]]) -> bool:
-    return any(
-        (comment.get("user") or {}).get("login") == OWNER
-        and APPROVAL_MARKER in (comment.get("body") or "")
-        and APPROVAL_DETAILS.search(comment.get("body") or "")
-        for comment in comments
-    )
+    return has_current_approval(comments, OWNER)
 
 
 def _acceptance_criteria(issue_body: str) -> list[str]:
@@ -392,10 +386,23 @@ class LocalAgentWorker:
             "--json", "number,body",
         ]))
         if not existing_prs:
-            self.run_agent(
-                AGENTS["engineer"], self.issue_prompt(issue, "engineer"),
-                worktree, f"{session_base}-engineer-1",
-            )
+            engineer_run = 1
+            while True:
+                self.run_agent(
+                    AGENTS["engineer"], self.issue_prompt(issue, "engineer"),
+                    worktree, f"{session_base}-engineer-{engineer_run}",
+                )
+                comments, record = self.comments_and_state(number)
+                if record["state"] not in {"architecture", "approval-pending"}:
+                    break
+                issue, comments = self.issue_details(number)
+                labels = {item.get("name") for item in issue.get("labels", [])}
+                record = self.advance_to_implementation(
+                    issue, labels, comments, record, session_base, worktree,
+                )
+                if record is None:
+                    return
+                engineer_run += 1
         self.verify_pushed_branch(branch)
         pr = self.create_or_reuse_pr(issue, branch)
         self.orchestrator("intake-pr-review", str(number), "--pr", str(pr))
@@ -408,7 +415,7 @@ class LocalAgentWorker:
     ) -> dict[str, Any] | None:
         number = issue["number"]
         if record["state"] == "todo":
-            if SKIP_ARCHITECT_LABEL in labels:
+            if not requires_architect(issue.get("body"), labels):
                 record = self.orchestrator(
                     "transition", str(number), "implementation",
                     "--agent", "senior-java-software-engineer",
@@ -437,7 +444,7 @@ class LocalAgentWorker:
                 for comment in comments
                 for marker in ("<!-- architect-design-note -->", "<!-- architect-skipped -->")
             )
-            if not has_design:
+            if reassessment_count(comments) or not has_design:
                 self.run_agent(
                     AGENTS["architect-agent"], self.issue_prompt(issue, "architect"),
                     worktree, f"{session_base}-architect-recovery",
