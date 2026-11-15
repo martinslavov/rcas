@@ -87,6 +87,13 @@ The workflows check out only the default branch and do not execute issue or PR c
 or merge permissions. If dispatch fails, inspect the `Copilot Agent Dispatch` run for a missing token, insufficient
 token permissions, disabled cloud agent, or a GitHub API assignment error.
 
+**Copilot startup failures:** the `<!-- copilot-agent-dispatch:... -->` marker only records that an assignment was accepted.
+If `copilot-swe-agent` then comments that it failed to start, the next dispatcher run (the comment event or the five-minute
+poll) retries the same stage and appends a new marker. A stage gets at most 3 dispatches (1 + 2 retries); a start with no
+later failure comment is never retried. Retries are serialized by the per-issue/PR workflow concurrency group. When retries
+are exhausted, the dispatcher posts one `<!-- copilot-startup-escalated:... -->` comment listing the request IDs from the
+failure comments (also kept in those comments) for GitHub Support, and dispatch stops for that stage.
+
 ## Local autonomous worker
 
 The cloud path above remains the GitHub-hosted option: create an owner-authored issue with `cloud-agent`, and GitHub Actions

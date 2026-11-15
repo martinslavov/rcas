@@ -68,8 +68,16 @@ AGENT_COMMENT_MARKERS = (
     "<!-- ci-failure-signature:",
     "<!-- ci-fix-state:",
     "<!-- copilot-agent-dispatch:",
+    "<!-- copilot-startup-escalated:",
     "<!-- agent-automation-start:",
 )
+COPILOT_AUTHORS = {"copilot-swe-agent", "copilot-swe-agent[bot]", "Copilot"}
+MAX_STARTUP_RETRIES = 2
+DISPATCH_MARKER_PREFIX = "<!-- copilot-agent-dispatch:"
+STARTUP_FAILURE_RE = re.compile(
+    r"(?i)(?:failed|unable|could\s*n[o']t|couldn't)\s+(?:to\s+)?start|error\s+(?:while\s+)?starting"
+)
+REQUEST_ID_RE = re.compile(r"(?i)request[\s_-]*id\W{0,4}([0-9a-z][0-9a-z:.-]{7,})")
 START_EPOCH_RE = re.compile(r"<!-- agent-automation-start:(\d+) -->")
 CI_FIX_ATTEMPT_RE = re.compile(r"<!-- ci-fix-attempt:(\d+) -->")
 CI_FAILURE_SIGNATURE_RE = re.compile(r"<!-- ci-failure-signature:([^\r\n]*?) -->")
@@ -94,6 +102,48 @@ class Dispatch:
         if self.resume:
             suffix += ":human-resume"
         return f"<!-- copilot-agent-dispatch:{self.stage}:{suffix} -->"
+
+
+def _is_startup_failure(comment: dict[str, Any]) -> bool:
+    return (comment.get("user") or {}).get("login") in COPILOT_AUTHORS and bool(
+        STARTUP_FAILURE_RE.search(comment.get("body") or "")
+    )
+
+
+def _escalation_marker(dispatch: Dispatch) -> str:
+    return dispatch.marker.replace("copilot-agent-dispatch:", "copilot-startup-escalated:")
+
+
+def _startup_request_ids(comments: list[dict[str, Any]]) -> list[str]:
+    ids: list[str] = []
+    for comment in comments:
+        if _is_startup_failure(comment):
+            ids.extend(i for i in REQUEST_ID_RE.findall(comment.get("body") or "") if i not in ids)
+    return ids
+
+
+def _dispatch_state(comments: list[dict[str, Any]], dispatch: Dispatch) -> str:
+    """Return new, dispatched, retry or exhausted.
+
+    A dispatch marker only blocks while Copilot has not reported a startup failure after the
+    latest marker; each retry appends another marker, which bounds the attempts.
+    """
+    marker_indexes = [
+        index for index, item in enumerate(comments) if dispatch.marker in (item.get("body") or "")
+    ]
+    if not marker_indexes:
+        return "new"
+    last_index = marker_indexes[-1]
+    # A later dispatch of another stage supersedes this one; failures belong to that later stage.
+    if any(DISPATCH_MARKER_PREFIX in (item.get("body") or "") for item in comments[last_index + 1:]):
+        return "dispatched"
+    if not any(_is_startup_failure(item) for item in comments[last_index + 1:]):
+        return "dispatched"
+    if len(marker_indexes) <= MAX_STARTUP_RETRIES:
+        return "retry"
+    if any(_escalation_marker(dispatch) in (item.get("body") or "") for item in comments):
+        return "dispatched"
+    return "exhausted"
 
 
 class GitHub:
@@ -212,6 +262,8 @@ def _dispatch_for_issue_comment(
     body = comment.get("body") or ""
     author = (comment.get("user") or {}).get("login")
     trusted_agent_authors = {api.owner, "copilot-swe-agent", "copilot-swe-agent[bot]"}
+    if _is_startup_failure(comment):
+        return _ready_issue_dispatch(api, issue)
     if author not in trusted_agent_authors or not any(
         marker in body for marker in (DESIGN_MARKER, SKIP_MARKER, APPROVAL_MARKER)
     ):
@@ -234,12 +286,10 @@ def _ready_issue_dispatch(api: GitHub, issue: dict[str, Any]) -> Dispatch | None
     comments = api.pages(f"/repos/{api.repository}/issues/{number}/comments")
     architect_dispatch = Dispatch("issue", number, "architect-agent")
     skip_architect = SKIP_ARCHITECT_LABEL in issue_labels
-    if not skip_architect and not any(
-        architect_dispatch.marker in (comment.get("body") or "") for comment in comments
-    ):
+    if not skip_architect and _dispatch_state(comments, architect_dispatch) != "dispatched":
         return architect_dispatch
     implementation_dispatch = Dispatch("issue", number, "senior-java-software-engineer")
-    if any(implementation_dispatch.marker in (comment.get("body") or "") for comment in comments):
+    if _dispatch_state(comments, implementation_dispatch) == "dispatched":
         return None
     if skip_architect:
         return implementation_dispatch
@@ -677,9 +727,23 @@ def _resource_path(api: GitHub, dispatch: Dispatch) -> str:
     return f"/repos/{api.repository}/{resource}/{dispatch.number}"
 
 
-def _already_dispatched(api: GitHub, dispatch: Dispatch) -> bool:
-    comments = api.pages(f"{_resource_path(api, dispatch)}/comments")
-    return any(dispatch.marker in (item.get("body") or "") for item in comments)
+def _escalate_startup_failure(
+    api: GitHub, dispatch: Dispatch, comments: list[dict[str, Any]]
+) -> None:
+    request_ids = _startup_request_ids(comments)
+    attempts = sum(dispatch.marker in (item.get("body") or "") for item in comments)
+    api.request(
+        "POST",
+        f"{_resource_path(api, dispatch)}/comments",
+        {
+            "body": (
+                f"{_escalation_marker(dispatch)}\n"
+                f"Copilot failed to start `{dispatch.stage}` for #{dispatch.number} after "
+                f"{attempts} dispatch attempts; automatic retries are stopped.\n"
+                f"Request IDs for GitHub Support: {', '.join(request_ids) or 'not reported'}"
+            )
+        },
+    )
 
 
 def _add_dispatch_marker(api: GitHub, dispatch: Dispatch) -> None:
@@ -702,7 +766,13 @@ def _record_start_time(api: GitHub, issue_number: int) -> None:
 
 
 def assign_to_copilot(api: GitHub, dispatch: Dispatch) -> None:
-    if _already_dispatched(api, dispatch):
+    comments = api.pages(f"{_resource_path(api, dispatch)}/comments")
+    state = _dispatch_state(comments, dispatch)
+    if state == "exhausted":
+        _escalate_startup_failure(api, dispatch, comments)
+        print(f"Copilot startup retries exhausted for {dispatch.stage} on #{dispatch.number}")
+        return
+    if state == "dispatched":
         print(f"Skipping duplicate {dispatch.stage} dispatch for #{dispatch.number}")
         return
 

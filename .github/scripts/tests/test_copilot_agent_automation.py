@@ -733,5 +733,107 @@ class AssignToCopilotQueryTest(unittest.TestCase):
         self.assertIn("Do not edit or push code", captured[-1]["instructions"])
 
 
+class StartupFailureRetryTest(unittest.TestCase):
+    ISSUE_DISPATCH = Dispatch("issue", 42, "senior-java-software-engineer")
+    FAILURE = {
+        "body": "Copilot failed to start. Request ID: 1A2B:3C4D:5E6F7A",
+        "user": {"login": "copilot-swe-agent[bot]"},
+    }
+
+    class Api(FakeGitHub):
+        def __init__(self):
+            super().__init__()
+            self.issue["labels"].append({"name": "skip-architect"})
+            self.posted = []
+
+        def request(self, method, path, body=None):
+            if method == "POST" and path.endswith("/issues/42/comments"):
+                self.posted.append(body["body"])
+                self.issue_comments.append({"body": body["body"], "user": {"login": "bot"}})
+                return {}
+            return super().request(method, path, body)
+
+        def graphql(self, query, variables):
+            if "addAssigneesToAssignable" in query:
+                return {"addAssigneesToAssignable": {"assignable": {"id": "ITEM"}}}
+            return {
+                "repository": {
+                    "id": "REPO",
+                    "suggestedActors": {"nodes": [{"login": "copilot-swe-agent", "id": "BOT"}]},
+                    "issue": {"id": "ITEM"},
+                }
+            }
+
+    def dispatches(self, api):
+        return get_dispatches("schedule", {}, api)
+
+    def marker(self):
+        return {"body": self.ISSUE_DISPATCH.marker, "user": {"login": "bot"}}
+
+    def test_successful_start_is_not_retried(self):
+        api = self.Api()
+        api.issue_comments.append(self.marker())
+        self.assertEqual([], self.dispatches(api))
+
+    def test_startup_failure_allows_retry(self):
+        api = self.Api()
+        api.issue_comments += [self.marker(), self.FAILURE]
+        self.assertEqual([self.ISSUE_DISPATCH], self.dispatches(api))
+
+    def test_retry_records_new_marker_and_blocks_until_next_failure(self):
+        from copilot_agent_automation import assign_to_copilot
+
+        api = self.Api()
+        api.issue_comments += [self.marker(), self.FAILURE]
+        assign_to_copilot(api, self.ISSUE_DISPATCH)
+        self.assertIn(self.ISSUE_DISPATCH.marker, api.posted)
+        self.assertEqual([], self.dispatches(api))
+        assign_to_copilot(api, self.ISSUE_DISPATCH)
+        self.assertEqual(1, sum(self.ISSUE_DISPATCH.marker in body for body in api.posted))
+
+    def test_failure_comment_event_triggers_retry(self):
+        api = self.Api()
+        api.issue_comments += [self.marker(), self.FAILURE]
+        event = {
+            "action": "created",
+            "issue": {"number": 42, "state": "open", "labels": api.issue["labels"]},
+            "comment": self.FAILURE,
+        }
+        self.assertEqual([self.ISSUE_DISPATCH], get_dispatches("issue_comment", event, api))
+
+    def test_repeated_failure_stops_and_preserves_request_ids_once(self):
+        from copilot_agent_automation import MAX_STARTUP_RETRIES, assign_to_copilot
+
+        api = self.Api()
+        for _ in range(MAX_STARTUP_RETRIES + 1):
+            api.issue_comments += [self.marker(), self.FAILURE]
+        assign_to_copilot(api, self.ISSUE_DISPATCH)
+        assign_to_copilot(api, self.ISSUE_DISPATCH)
+        self.assertEqual(1, len(api.posted))
+        self.assertIn("1A2B:3C4D:5E6F7A", api.posted[0])
+        self.assertNotIn(self.ISSUE_DISPATCH.marker, api.posted[0])
+        self.assertEqual([], self.dispatches(api))
+
+    def test_engineer_startup_failure_retries_engineer_not_completed_architect(self):
+        api = self.Api()
+        api.issue["labels"] = [label for label in api.issue["labels"] if label["name"] != "skip-architect"]
+        architect = Dispatch("issue", 42, "architect-agent")
+        api.issue_comments += [
+            {"body": architect.marker, "user": {"login": "bot"}},
+            {"body": "<!-- architect-skipped -->\nskipped: small", "user": {"login": "copilot-swe-agent[bot]"}},
+            self.marker(),
+            self.FAILURE,
+        ]
+        self.assertEqual([self.ISSUE_DISPATCH], self.dispatches(api))
+
+    def test_failure_from_non_copilot_author_is_ignored(self):
+        api = self.Api()
+        api.issue_comments += [
+            self.marker(),
+            {"body": "failed to start", "user": {"login": "someone"}},
+        ]
+        self.assertEqual([], self.dispatches(api))
+
+
 if __name__ == "__main__":
     unittest.main()
