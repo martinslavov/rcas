@@ -37,12 +37,22 @@ def assessment_from_body(body: str | None) -> str:
     rationale = RATIONALE.search(sections[0])
     if not decision or decision.group(1).lower() != value or not rationale:
         return REQUIRED
-    if rationale.group(1).strip().lower() in {
-        "pending product owner assessment.",
-        "pending assessment.",
+    normalized_rationale = re.sub(
+        r"[^a-z0-9]+",
+        " ",
+        rationale.group(1).strip().lower(),
+    ).strip()
+    if normalized_rationale in {
+        "pending product owner assessment",
+        "pending product owner assessment",
+        "pending assessment",
         "pending",
         "tbd",
         "n/a",
+        "na",
+        "n a",
+        "not applicable",
+        "none",
     }:
         return REQUIRED
     return value

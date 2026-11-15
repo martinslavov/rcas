@@ -13,12 +13,12 @@ from architecture_assessment import (
 
 class ArchitectureAssessmentTest(unittest.TestCase):
     @staticmethod
-    def body(value):
+    def body(value, rationale="Documentation-only task with no runtime or contract change."):
         return (
             "### Architecture assessment\n"
             f"<!-- architecture-assessment: {value} -->\n"
             f"Decision: {value}\n"
-            "Rationale: Documentation-only task with no runtime or contract change."
+            f"Rationale: {rationale}"
         )
 
     def test_only_one_known_not_required_marker_skips_architect(self):
@@ -59,6 +59,10 @@ class ArchitectureAssessmentTest(unittest.TestCase):
                 "Decision: required\n"
                 "Rationale: Mismatched decision.",
                 REQUIRED,
+            ),
+            *(
+                (self.body(NOT_REQUIRED, rationale), REQUIRED)
+                for rationale in ("NA", "N/A", "N/A.", "n/a", "Not applicable", "TBD")
             ),
         ):
             with self.subTest(body=body):
