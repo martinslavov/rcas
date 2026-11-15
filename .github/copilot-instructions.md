@@ -23,6 +23,15 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
   design comments or architecture approval, even when `architecture-approval-required` is present. This is an explicit
   user opt-out. With `cloud-agent`, cloud dispatch starts the Engineer directly; the guarded branch/actor/PR checks and all
   post-implementation review, QA, CI and merge gates remain in force.
+- Unless `skip-architect` is present, the Product Owner writes exactly one
+  `<!-- architecture-assessment: required|not-required|uncertain -->` marker and a visible `### Architecture assessment`
+  section containing a matching `Decision: <value>` and a meaningful, non-placeholder `Rationale: <text>`. The issue
+  form's pending default is not a valid assessment.
+  Public API, database schema/migrations, messaging, security, new components/layers, cache-topology changes, or
+  uncertainty require Architect. Only narrow, low-risk changes that touch none of those areas or configuration and add
+  no dependency with meaningful security, compatibility, or architectural risk may be marked `not-required`. Missing,
+  malformed, duplicate, mismatched, or rationale-less assessment requires Architect. A
+  `not-required` result is not the same as the explicit `skip-architect` opt-out.
 - `local-agent` opts an owner-authored issue into `.github/scripts/local_agent_worker.py`; it runs local Copilot CLI sessions
   in separate Git worktrees and handles PR Review, QA, CI and merge. Never combine it with `cloud-agent`. Issues from other
   authors, `backlog`, `requires-pro`, failed, or human-review tasks are not run.
@@ -34,7 +43,8 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 - **Cloud handoff takes precedence over all task-stage instructions below.** For any `cloud-agent` task, invoke the Product
   Owner unless `skip-product-owner` is present; then create the issue with every parsed label, report its URL, and end the
   current turn. Do not run Architect, Engineer, PR Review, QA, create a branch or PR, or fall back to local agents if cloud
-  dispatch fails. The cloud workflow owns all later stages, including Architect and Engineer (subject to `skip-architect`)
+  dispatch fails. The cloud workflow owns all later stages, including the conditional Architect/Engineer stages
+  (subject to `skip-architect`)
   and the PR review/QA/CI/merge gates. Do not claim a cloud agent has started unless verified. A `backlog` issue remains
   parked until moved to TODO.
 - `/create-pr-cloud` is for handing an already implemented task PR to cloud review automation; it is not the intake path
@@ -63,11 +73,13 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
   `backlog` label. Agents must not use `task_queue.sh move` directly to change a task stage.
 - TODO items are picked up when a session is active: after every merged task and whenever the user asks to process the queue
   (for example `RUN-QUEUE`), run `task_queue.sh list` and process items one at a time, oldest first. For a queued issue the
-  Product Owner step is already done: the Architect starts it with `todo → architecture` using its own agent id. Merging
+  Product Owner step is already done: Architect starts only when the assessment requires it; otherwise Engineer may move
+  directly from `todo → implementation`. Merging
   projects the item to `Done`. For queued issues, elapsed time starts when picked up from `TODO`.
 - For an issue that is ready for autonomous work, add the `cloud-agent` label. The Copilot cloud-agent workflow starts
-  `architect-agent` first, unless `skip-architect` explicitly opts out; otherwise it starts the Engineer only after an
-  auditable skip/design note says approval is not required, or after the repository owner posts
+  `architect-agent` when the Product Owner assessment is `required`, `uncertain`, absent or invalid, unless
+  `skip-architect` explicitly opts out; a valid `not-required` assessment starts Engineer directly. Otherwise it starts
+  the Engineer only after an auditable skip/design note says approval is not required, or after the repository owner posts
   `<!-- architecture-approved -->` for an issue labelled `architecture-approval-required`. For `TAG: cloud-agent` tasks,
   the Engineer pushes the issue-numbered feature branch;
   `ci-agent-pr-creation.yml` creates/reuses the marked PR and performs guarded PR Review intake. For local/manual tasks, the
@@ -116,16 +128,18 @@ Six custom agents (in `.github/agents/`) do the work:
 For `local-agent`, perform only issue intake and return as specified in **Local-worker handoff** above; the worker owns
 all later stages. For `cloud-agent`, perform only issue intake and return as specified in **Cloud handoff** above; the
 cloud workflow owns all later stages. For untagged interactive local `TASK-NAME:` tasks, run the applicable stages in order:
-Product Owner (unless `skip-product-owner`) → Architect (unless `skip-architect`) → user approval when required →
+Product Owner (unless `skip-product-owner`) → conditional Architect (unless `skip-architect`) → user approval when required →
 Engineer → `/create-pr-cloud` → PR Review → QA → merge → elapsed time recorded on the issue and PR:
 
 1. Unless `skip-product-owner` is present, delegate the whole input to `product-owner-agent`. It returns the issue number,
-   URL and the branch name. With `skip-product-owner`, parse the input with `.github/scripts/task_input.py` and create the
+   URL, branch name, and a single architecture-assessment marker with rationale. With `skip-product-owner`, parse the input with `.github/scripts/task_input.py` and create the
    issue directly using the parsed task name, description and labels; do not invoke Product Owner. For `local-agent` or
    `cloud-agent`, report
    the issue URL and stop here; do not proceed to step 2 or any later step in this session. A cloud
    dispatch failure is reported, never treated as permission to continue locally.
-2. Unless `skip-architect` is present, delegate the issue to `architect-agent`. It posts exactly one design note comment containing
+2. Unless `skip-architect` is present, delegate the issue to `architect-agent` when its assessment is `required`,
+   `uncertain`, absent or invalid, or the issue already has `architecture-approval-required`. A valid `not-required`
+   assessment with no approval label skips Architect. It posts one design note comment containing
    `<!-- architect-design-note -->` with affected components, interfaces/contracts, data/migrations, risks/mitigations,
    test plan and `Approval required: yes/no`, or an auditable skip comment containing `<!-- architect-skipped -->` and
    `skipped: <reason>`.
@@ -135,7 +149,7 @@ Engineer → `/create-pr-cloud` → PR Review → QA → merge → elapsed time 
    changes (new module/layer/component or cache topology), database schema/migrations, messaging/Kafka, public HTTP API
    (endpoints, payloads or status codes), or security (authentication, authorization, secrets, cryptography or
    security-relevant dependencies).
-4. Delegate the issue (number, branch name, Architect comment if applicable, and original input) to
+4. Delegate the issue (number, branch name, assessment, Architect comment if applicable, and original input) to
    `senior-java-software-engineer` after the approval gate is satisfied, Architect has documented a skip, or
    `skip-architect` is present. It implements the task, commits and pushes the
    branch, then hands it back to the main agent. It must not create a PR. For interactive local work, the main agent fetches
@@ -144,6 +158,10 @@ Engineer → `/create-pr-cloud` → PR Review → QA → merge → elapsed time 
    already stopped after issue creation. The interactive local coordinator creates the marked task PR and calls
    `orchestrator.py intake-pr-review <issue> --pr <pr>` without `--cloud-agent`, sets gates to pending, and owns the PR
    template's "Acceptance criteria → evidence" section.
+   If Engineer discovers during implementation that the scope has expanded into an architectural trigger or become
+   uncertain, it stops before implementing that scope, transitions `implementation → architecture`, and posts
+   `<!-- architecture-review-requested -->` with the reason. The local worker and cloud dispatcher return the task to
+   Architect; Engineer resumes only after review and any required explicit owner approval.
 5. For the interactive local task path only, delegate the PR number to `pr-review-agent`. It independently reads the issue and full diff, posts its findings, and always
    sets a final `PR Review` status on the current head SHA. For `architecture-approval-required` issues, it also verifies
    the implementation against the approved design note; a material deviation is at least `major`, and it requires backward

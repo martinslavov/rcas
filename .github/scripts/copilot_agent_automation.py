@@ -16,6 +16,13 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+from architecture_assessment import (
+    REASSESSMENT_MARKER,
+    has_current_approval,
+    reassessment_count,
+    requires_architect,
+)
+
 
 API_ROOT = "https://api.github.com"
 API_VERSION = "2022-11-28"
@@ -70,6 +77,7 @@ AGENT_COMMENT_MARKERS = (
     "<!-- copilot-agent-dispatch:",
     "<!-- copilot-startup-escalated:",
     "<!-- agent-automation-start:",
+    REASSESSMENT_MARKER,
 )
 COPILOT_AUTHORS = {"copilot-swe-agent", "copilot-swe-agent[bot]", "Copilot"}
 MAX_STARTUP_RETRIES = 2
@@ -82,6 +90,7 @@ START_EPOCH_RE = re.compile(r"<!-- agent-automation-start:(\d+) -->")
 CI_FIX_ATTEMPT_RE = re.compile(r"<!-- ci-fix-attempt:(\d+) -->")
 CI_FAILURE_SIGNATURE_RE = re.compile(r"<!-- ci-failure-signature:([^\r\n]*?) -->")
 CI_FIX_STATE_RE = re.compile(r"<!-- ci-fix-state:([0-9a-f]{40}):([0-9a-f]{64}) -->")
+TASK_STATE_RE = re.compile(r"<!-- task-state: (\{.*?\}) -->", re.DOTALL)
 
 
 class AutomationError(RuntimeError):
@@ -95,12 +104,15 @@ class Dispatch:
     stage: str
     sha: str | None = None
     resume: bool = False
+    cycle: int | None = None
 
     @property
     def marker(self) -> str:
         suffix = self.sha or "issue"
         if self.resume:
             suffix += ":human-resume"
+        if self.cycle is not None:
+            suffix += f":architecture-review:{self.cycle}"
         return f"<!-- copilot-agent-dispatch:{self.stage}:{suffix} -->"
 
 
@@ -265,10 +277,28 @@ def _dispatch_for_issue_comment(
     if _is_startup_failure(comment):
         return _ready_issue_dispatch(api, issue)
     if author not in trusted_agent_authors or not any(
-        marker in body for marker in (DESIGN_MARKER, SKIP_MARKER, APPROVAL_MARKER)
+        marker in body
+        for marker in (DESIGN_MARKER, SKIP_MARKER, APPROVAL_MARKER, REASSESSMENT_MARKER, "<!-- task-state:")
     ):
         return None
     return _ready_issue_dispatch(api, issue)
+
+
+def _issue_task_state(comments: list[dict[str, Any]], issue_number: int) -> str | None:
+    records = []
+    for comment in comments:
+        match = TASK_STATE_RE.search(comment.get("body") or "")
+        if not match:
+            continue
+        try:
+            record = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            return None
+        if record.get("issue") == issue_number:
+            records.append(record)
+    if len(records) != 1:
+        return None
+    return records[0].get("state")
 
 
 def _ready_issue_dispatch(api: GitHub, issue: dict[str, Any]) -> Dispatch | None:
@@ -286,46 +316,60 @@ def _ready_issue_dispatch(api: GitHub, issue: dict[str, Any]) -> Dispatch | None
     comments = api.pages(f"/repos/{api.repository}/issues/{number}/comments")
     architect_dispatch = Dispatch("issue", number, "architect-agent")
     skip_architect = SKIP_ARCHITECT_LABEL in issue_labels
-    if not skip_architect and _dispatch_state(comments, architect_dispatch) != "dispatched":
+    review_count = reassessment_count(comments)
+    task_state = _issue_task_state(comments, number)
+    if not skip_architect and review_count:
+        if task_state == "architecture":
+            reassessment_dispatch = Dispatch(
+                "issue", number, "architect-agent", cycle=review_count,
+            )
+            if _dispatch_state(comments, reassessment_dispatch) != "dispatched":
+                return reassessment_dispatch
+            return None
+        if task_state == "approval-pending":
+            if not has_current_approval(comments, api.owner):
+                return None
+            task_state = "implementation"
+        if task_state == "implementation":
+            engineer_dispatch = Dispatch(
+                "issue", number, "senior-java-software-engineer",
+                cycle=review_count,
+            )
+            if _dispatch_state(comments, engineer_dispatch) != "dispatched":
+                return engineer_dispatch
+            return None
+
+    needs_architect = not skip_architect and requires_architect(issue.get("body"), issue_labels)
+    if needs_architect and _dispatch_state(comments, architect_dispatch) != "dispatched":
         return architect_dispatch
     implementation_dispatch = Dispatch("issue", number, "senior-java-software-engineer")
     if _dispatch_state(comments, implementation_dispatch) == "dispatched":
         return None
-    if skip_architect:
+    if skip_architect or not needs_architect:
         return implementation_dispatch
 
     trusted_agent_authors = {api.owner, "copilot-swe-agent", "copilot-swe-agent[bot]"}
     design_notes = [
-        comment
-        for comment in comments
+        (index, comment)
+        for index, comment in enumerate(comments)
         if (comment.get("user") or {}).get("login") in trusted_agent_authors
         and (DESIGN_MARKER in (comment.get("body") or "") or SKIP_MARKER in (comment.get("body") or ""))
     ]
-    approval_required = ARCHITECTURE_APPROVAL_LABEL in issue_labels or any(
-        re.search(r"Approval required:\s*yes", item.get("body") or "", re.IGNORECASE)
-        for item in design_notes
+    _, latest_note = design_notes[-1] if design_notes else (None, None)
+    latest_note_body = latest_note.get("body") or "" if latest_note else ""
+    approval_required = ARCHITECTURE_APPROVAL_LABEL in issue_labels or bool(
+        re.search(r"Approval required:\s*yes", latest_note_body, re.IGNORECASE)
     )
     if approval_required:
-        has_design_approval_request = any(
-            re.search(r"Approval required:\s*yes", item.get("body") or "", re.IGNORECASE)
-            for item in design_notes
-        )
-        has_owner_approval = any(
-            (comment.get("user") or {}).get("login") == api.owner
-            and APPROVAL_MARKER in (comment.get("body") or "")
-            and re.search(
-                rf"Approved by @{re.escape(api.owner)} at \d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}:\d{{2}}Z",
-                comment.get("body") or "",
-            )
-            for comment in comments
-        )
+        has_design_approval_request = latest_note is not None
+        has_owner_approval = has_current_approval(comments, api.owner)
         if has_design_approval_request and has_owner_approval:
             return implementation_dispatch
         return None
     if any(
-        SKIP_MARKER in (item.get("body") or "")
-        or re.search(r"Approval required:\s*no", item.get("body") or "", re.IGNORECASE)
-        for item in design_notes
+        SKIP_MARKER in (latest_note.get("body") or "")
+        or re.search(r"Approval required:\s*no", latest_note.get("body") or "", re.IGNORECASE)
+        for _, latest_note in design_notes[-1:]
     ):
         return implementation_dispatch
     return None

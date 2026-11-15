@@ -30,14 +30,23 @@ PostgreSQL over R2DBC). You turn a raw request into a clear, small, testable bac
    The caller must not assign this agent and instead creates the task issue directly from the parsed input.
 2. Check for duplicates: `gh issue list -R martinslavov/rcas --state all --search "<keywords>"`. If a matching issue
    exists, report it and stop instead of creating a new one.
-3. Analyze: goal and value, in scope / out of scope, assumptions, risks, impact. Ask the user a question only if a
-   decision cannot be inferred and would change the scope.
+3. Analyze: goal and value, in scope / out of scope, assumptions, risks, impact, and whether an architecture review is
+   required. Use `required` for a public HTTP API change, database schema/migration, messaging, security, a new component
+   or layer, cache-topology change, or any uncertain scope. Use `not-required` only for documentation, a narrow fix, or
+   refactoring that changes none of those areas or configuration and adds no dependency with meaningful security,
+   compatibility, or architectural risk. Record one exact machine-readable marker
+   in the issue body: `<!-- architecture-assessment: required -->`,
+   `<!-- architecture-assessment: not-required -->`, or `<!-- architecture-assessment: uncertain -->`. Include a visible
+   `### Architecture assessment` section with `Decision: <value>` and a meaningful `Rationale: <text>` line. Missing,
+   malformed, repeated markers, a missing section, or an empty/placeholder rationale are treated as `required` by the
+   automation. Ask the user a question only if a decision cannot be inferred and would change the scope.
    Workflow transition: when starting a backlog task, seed its verified `backlog` state and have the human use `backlog → todo --agent human`; this agent does not impersonate the human.
 4. Create the issue with `gh issue create -R martinslavov/rcas` using the structure of `.github/ISSUE_TEMPLATE/issue.yml`:
    - Title: short, readable, imperative (no `TASK-NAME:` prefix).
    - Body sections: `### Type` (Bug / Enhancement / Documentation / Task), `### Description`,
      `### Current behavior / steps to reproduce` (`NA` if not applicable), `### Acceptance criteria` (checklist),
-     `### Out of scope`, `### Notes` (risks, dependencies, hints for the implementer).
+     `### Out of scope`, `### Notes` (risks, dependencies, hints for the implementer), and
+     `### Architecture assessment` (one marker, decision, and rationale). This is an intake classification, not a design approval.
    - Add every label returned by the parser when creating the issue, including `cloud-agent` for the opt-in cloud flow,
      `local-agent` for the opt-in local worker flow (never combine them),
      `skip-architect` and `skip-product-owner` for the requested role opt-outs, `development:<level>` when supplied, and
@@ -48,8 +57,8 @@ PostgreSQL over R2DBC). You turn a raw request into a clear, small, testable bac
      `gh label create cloud-agent -R martinslavov/rcas --color 1D76DB --description "Run the Copilot cloud agent workflow" --force`.
      Before creating a `local-agent` issue, ensure that repository label exists with
      `gh label create local-agent -R martinslavov/rcas --color 1D76DB --description "Run the local Copilot agent worker" --force`.
-5. Note whether the issue may affect architecture, database schema/migrations, messaging, public HTTP APIs or security so
-   the Architect can evaluate the approval triggers. Do not treat this assessment as design approval or skip the Architect.
+5. Do not classify a task as `not-required` if any mandatory trigger or relevant uncertainty applies. `skip-architect` is
+   a separate explicit user opt-out and must never be inferred from this assessment.
 6. Return to the caller: the issue number and URL, whether it is a backlog item, the branch name and a 2-3 line summary
    of the acceptance criteria. For `cloud-agent` issues, use `feature/<issue-number>-<task-name-slug>` so the hardened PR
    workflow can validate the branch-to-issue association; for local tasks retain `feature/<task-name>`. Derive a short

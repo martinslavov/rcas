@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Mapping
 
+from architecture_assessment import NOT_REQUIRED, assessment_from_body, has_current_approval
+
 OWNER = "martinslavov"
 REPO = "martinslavov/rcas"
 ENTRY_LABEL = "cloud-agent"
@@ -21,14 +23,13 @@ HUMAN_REVIEW_LABEL = "needs-human-review"
 SHIP_PR_MARKER = "<!-- ship-pr -->"
 PR_REVIEW_INTAKE_ACTION = "ship_pr_intake"
 STATE_MARKER = re.compile(r"<!-- task-state: (\{.*?\}) -->", re.DOTALL)
-APPROVAL_DETAILS = re.compile(r"Approved by @[A-Za-z0-9-]+ at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 
 STATE_TABLE: dict[str, tuple[str | None, frozenset[str]]] = {
     "backlog": ("human", frozenset({"todo"})),
     "todo": ("architect-agent", frozenset({"architecture"})),
     "architecture": ("architect-agent", frozenset({"approval-pending", "implementation"})),
     "approval-pending": ("human", frozenset({"implementation", "blocked"})),
-    "implementation": ("senior-java-software-engineer", frozenset({"pr-review"})),
+    "implementation": ("senior-java-software-engineer", frozenset({"architecture", "pr-review"})),
     "pr-review": ("pr-review-agent", frozenset({"qa", "implementation"})),
     "qa": ("senior-qa-engineer", frozenset({"merge", "implementation"})),
     "dod": ("dod-validator-agent", frozenset({"merge", "implementation"})),
@@ -156,6 +157,7 @@ def validate_record(record: Mapping) -> None:
 
 def validate_transition(
     record: Mapping, target: str, agent: str, skip_architect: bool = False,
+    architecture_approved: bool = False,
 ) -> None:
     """Validate a state change without performing I/O."""
     validate_record(record)
@@ -189,6 +191,8 @@ def validate_transition(
     authorized = {owner}
     if bypass_architecture:
         authorized.add("senior-java-software-engineer")
+    if source == "approval-pending" and target == "implementation" and architecture_approved:
+        authorized.add("senior-java-software-engineer")
     if target in {"blocked", "human-review"} and source in ACTIVE_STATES:
         authorized.add("human")
     if agent not in authorized:
@@ -203,8 +207,9 @@ def transition_record(
     head_sha: str | None = None,
     now: str | None = None,
     skip_architect: bool = False,
+    architecture_approved: bool = False,
 ) -> dict:
-    validate_transition(record, target, agent, skip_architect)
+    validate_transition(record, target, agent, skip_architect, architecture_approved)
     updated = deepcopy(dict(record))
     previous_state = updated["state"]
     updated["state"] = target
@@ -391,33 +396,38 @@ class Orchestrator:
 
     def prepare_transition(
         self, record: Mapping, target: str, agent: str, head_sha: str | None = None,
-        skip_architect: bool = False,
+        skip_architect: bool = False, architecture_approved: bool = False,
     ) -> dict:
-        return transition_record(record, target, agent, head_sha, skip_architect=skip_architect)
+        return transition_record(
+            record, target, agent, head_sha, skip_architect=skip_architect,
+            architecture_approved=architecture_approved,
+        )
 
     def transition(self, issue: int, target: str, agent: str, head_sha: str | None, dry_run: bool) -> dict:
         record, comment_id = self.get_record(issue)
         skip_architect = False
+        architecture_approved = False
         if record["state"] == "todo" and target == "implementation":
-            labels = self.call(
-                "gh", "api", "--paginate", "--jq", ".[].name",
-                f"repos/{REPO}/issues/{issue}/labels",
+            issue_data = json.loads(self.call("gh", "api", f"repos/{REPO}/issues/{issue}"))
+            labels = {item.get("name") for item in issue_data.get("labels", [])}
+            skip_architect = (
+                SKIP_ARCHITECT_LABEL in labels
+                or (
+                    assessment_from_body(issue_data.get("body")) == NOT_REQUIRED
+                    and "architecture-approval-required" not in labels
+                )
             )
-            skip_architect = SKIP_ARCHITECT_LABEL in labels.splitlines()
-        updated = self.prepare_transition(record, target, agent, head_sha, skip_architect)
+        if record["state"] == "approval-pending" and target == "implementation":
+            if not has_current_approval(self.get_comments(issue), OWNER):
+                raise OrchestratorError("explicit architecture-approved comment is required")
+            architecture_approved = True
+        updated = self.prepare_transition(
+            record, target, agent, head_sha, skip_architect, architecture_approved,
+        )
         if record["state"] == "architecture" and target == "implementation":
             labels = self.call("gh", "api", "--paginate", "--jq", ".[].name", f"repos/{REPO}/issues/{issue}/labels")
             if "architecture-approval-required" in labels.splitlines():
                 raise OrchestratorError("architecture approval is required; transition to approval-pending first")
-        if record["state"] == "approval-pending" and target == "implementation":
-            approvals = [
-                comment for comment in self.get_comments(issue)
-                if comment.get("author") == OWNER
-                and "<!-- architecture-approved -->" in comment.get("body", "")
-                and APPROVAL_DETAILS.search(comment.get("body", ""))
-            ]
-            if not approvals:
-                raise OrchestratorError("explicit architecture-approved comment is required")
         if dry_run:
             return updated
         self.write_record(issue, updated, comment_id)

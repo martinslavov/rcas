@@ -92,14 +92,31 @@ class OrchestratorStateMachineTests(unittest.TestCase):
         self.assertEqual("implementation", updated["state"])
         self.assertEqual("senior-java-software-engineer", updated["owner_agent"])
 
-    def test_orchestrator_requires_skip_architect_label_for_bypass(self):
+    def test_engineer_can_return_implementation_to_architecture(self):
+        updated = transition_record(
+            self.record("implementation"), "architecture", "senior-java-software-engineer",
+            now=self.now,
+        )
+        self.assertEqual("architecture", updated["state"])
+        self.assertEqual("architect-agent", updated["owner_agent"])
+
+    def test_orchestrator_allows_skip_architect_label_for_bypass(self):
         state = self.record("todo")
         comments = json.dumps({
             "id": 101,
             "body": serialize_record(state),
             "author": "martinslavov",
         })
-        runner = Mock(side_effect=[comments, "skip-architect"])
+        issue = json.dumps({
+            "body": (
+                "### Architecture assessment\n"
+                "<!-- architecture-assessment: required -->\n"
+                "Decision: required\n"
+                "Rationale: Task affects a public interface."
+            ),
+            "labels": [{"name": "skip-architect"}],
+        })
+        runner = Mock(side_effect=[comments, issue])
         orchestrator = Orchestrator(runner)
 
         updated = orchestrator.transition(
@@ -107,7 +124,55 @@ class OrchestratorStateMachineTests(unittest.TestCase):
 
         self.assertEqual("implementation", updated["state"])
         self.assertEqual(2, runner.call_count)
-        self.assertIn("issues/101/labels", runner.call_args_list[1].args[0][-1])
+        self.assertIn("issues/101", runner.call_args_list[1].args[0][-1])
+
+    def test_orchestrator_allows_valid_not_required_assessment_without_opt_out_label(self):
+        state = self.record("todo")
+        comments = json.dumps({
+            "id": 101,
+            "body": serialize_record(state),
+            "author": "martinslavov",
+        })
+        issue = json.dumps({
+            "body": (
+                "### Architecture assessment\n"
+                "<!-- architecture-assessment: not-required -->\n"
+                "Decision: not-required\n"
+                "Rationale: Narrow task with no architectural impact."
+            ),
+            "labels": [],
+        })
+        runner = Mock(side_effect=[comments, issue])
+
+        updated = Orchestrator(runner).transition(
+            101, "implementation", "senior-java-software-engineer", None, dry_run=True,
+        )
+
+        self.assertEqual("implementation", updated["state"])
+        self.assertEqual(2, runner.call_count)
+
+    def test_not_required_assessment_cannot_bypass_existing_approval_label(self):
+        state = self.record("todo")
+        comments = json.dumps({
+            "id": 101,
+            "body": serialize_record(state),
+            "author": "martinslavov",
+        })
+        issue = json.dumps({
+            "body": (
+                "### Architecture assessment\n"
+                "<!-- architecture-assessment: not-required -->\n"
+                "Decision: not-required\n"
+                "Rationale: Narrow task with no architectural impact."
+            ),
+            "labels": [{"name": "architecture-approval-required"}],
+        })
+        orchestrator = Orchestrator(Mock(side_effect=[comments, issue]))
+
+        with self.assertRaisesRegex(OrchestratorError, "not allowed"):
+            orchestrator.transition(
+                101, "implementation", "senior-java-software-engineer", None, dry_run=True,
+            )
 
     def test_rejected_pure_requests_make_zero_gh_calls(self):
         runner = Mock()
@@ -127,6 +192,34 @@ class OrchestratorStateMachineTests(unittest.TestCase):
             orchestrator.transition(101, "implementation", "human", None, dry_run=False)
         self.assertEqual(runner.call_count, 2)
         self.assertTrue(all("-X" not in call.args[0] for call in runner.call_args_list))
+
+    def test_engineer_can_resume_after_explicit_owner_architecture_approval(self):
+        record = self.record("approval-pending")
+        comments = "\n".join([
+            json.dumps({
+                "id": 101, "body": serialize_record(record), "author": "martinslavov",
+            }),
+            json.dumps({
+                "id": 103,
+                "body": "<!-- architect-design-note -->\nApproval required: yes",
+                "author": "copilot-swe-agent[bot]",
+            }),
+            json.dumps({
+                "id": 102,
+                "body": (
+                    "<!-- architecture-approved --> "
+                    "Approved by @martinslavov at 2026-10-26T09:00:00Z"
+                ),
+                "author": "martinslavov",
+            }),
+        ])
+        orchestrator = Orchestrator(Mock(return_value=comments))
+
+        updated = orchestrator.transition(
+            101, "implementation", "senior-java-software-engineer", None, dry_run=True,
+        )
+
+        self.assertEqual("implementation", updated["state"])
 
     def test_record_serialization_and_parse_round_trip(self):
         record = self.record()
