@@ -73,6 +73,7 @@ AGENT_COMMENT_MARKERS = (
 )
 COPILOT_AUTHORS = {"copilot-swe-agent", "copilot-swe-agent[bot]", "Copilot"}
 MAX_STARTUP_RETRIES = 2
+DISPATCH_MARKER_PREFIX = "<!-- copilot-agent-dispatch:"
 STARTUP_FAILURE_RE = re.compile(
     r"(?i)(?:failed|unable|could\s*n[o']t|couldn't)\s+(?:to\s+)?start|error\s+(?:while\s+)?starting"
 )
@@ -132,7 +133,11 @@ def _dispatch_state(comments: list[dict[str, Any]], dispatch: Dispatch) -> str:
     ]
     if not marker_indexes:
         return "new"
-    if not any(_is_startup_failure(item) for item in comments[marker_indexes[-1] + 1:]):
+    last_index = marker_indexes[-1]
+    # A later dispatch of another stage supersedes this one; failures belong to that later stage.
+    if any(DISPATCH_MARKER_PREFIX in (item.get("body") or "") for item in comments[last_index + 1:]):
+        return "dispatched"
+    if not any(_is_startup_failure(item) for item in comments[last_index + 1:]):
         return "dispatched"
     if len(marker_indexes) <= MAX_STARTUP_RETRIES:
         return "retry"

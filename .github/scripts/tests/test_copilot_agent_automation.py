@@ -814,6 +814,18 @@ class StartupFailureRetryTest(unittest.TestCase):
         self.assertNotIn(self.ISSUE_DISPATCH.marker, api.posted[0])
         self.assertEqual([], self.dispatches(api))
 
+    def test_engineer_startup_failure_retries_engineer_not_completed_architect(self):
+        api = self.Api()
+        api.issue["labels"] = [label for label in api.issue["labels"] if label["name"] != "skip-architect"]
+        architect = Dispatch("issue", 42, "architect-agent")
+        api.issue_comments += [
+            {"body": architect.marker, "user": {"login": "bot"}},
+            {"body": "<!-- architect-skipped -->\nskipped: small", "user": {"login": "copilot-swe-agent[bot]"}},
+            self.marker(),
+            self.FAILURE,
+        ]
+        self.assertEqual([self.ISSUE_DISPATCH], self.dispatches(api))
+
     def test_failure_from_non_copilot_author_is_ignored(self):
         api = self.Api()
         api.issue_comments += [
