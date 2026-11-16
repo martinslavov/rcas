@@ -5,14 +5,19 @@ description: Create a PR without a task issue, run local PR Review and QA agents
 
 # Create a PR locally without a task issue
 
-This flow creates no task issue. The current local session coordinates PR Review, QA and gated merge; it does not dispatch
-Copilot cloud automation. Follow `.github/copilot-instructions.md`, the PR template and the agent profiles.
+This flow creates no task issue. It always runs in a dedicated temporary worktree and never in the caller's current checkout.
+The current local session coordinates PR Review, QA and gated merge; it does not dispatch Copilot cloud automation. Follow
+`.github/copilot-instructions.md`, the PR template and the agent profiles.
 
 ## Rules
 
 - Never create or link a task issue. Include `<!-- no-task-issue -->` in the PR body; the tracking workflow skips it.
 - Do not add `<!-- ship-pr -->`, `<!-- quick-pr-cloud-auto-merge -->`, `Closes #N`, or `cloud-agent`.
 - Never commit or push to `main`. Reuse an existing `feature/*` or `hotfix/*` branch; only create a branch from an up-to-date `main`.
+- Worktree is mandatory: create a fresh linked worktree for every `/create-pr-local` run and execute all git edits, tests,
+  commits and pushes there.
+- Treat the caller's current local edits as the requested scope for this command: carry all current tracked and untracked
+  non-ignored changes into the new worktree before implementation continues. Abort on apply conflicts and report them.
 - Do not stage unrelated files or secrets. Stop if an unmarked PR already exists for the branch.
 - The coordinator must verify every required check and both agent statuses on the current head SHA, absence of
   `needs-human-review`, human comments or reviews, and unresolved blocker/major findings. Never bypass these gates.
@@ -30,26 +35,29 @@ Copilot cloud automation. Follow `.github/copilot-instructions.md`, the PR templ
    If on `main`, fetch and fast-forward to `origin/main`, then create `feature/<slug>`. Otherwise reuse the current feature/hotfix
    branch and stop if it is unrelated to the requested change. Do not adopt a PR without `<!-- no-task-issue -->` or one
    with the cloud opt-in marker or label.
-2. Implement the small change, add focused tests when appropriate, and run the relevant documented checks. Stage only intended
-   files; commit with a clear message ending in
+2. Create a linked worktree for the run (for example under `../rcas-sessions/`) and switch all further execution to that
+   worktree. Capture the caller's current tracked and untracked non-ignored edits and apply them to the worktree so the PR
+   starts from the user's in-progress change set. If apply fails or conflicts, stop and report instead of continuing.
+3. Implement the change, add focused tests when appropriate, and run the relevant documented checks in the worktree. Stage only
+   intended files; commit with a clear message ending in
    `Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>`.
-3. Push the branch. If there is no open PR for it, create one from
+4. Push the branch. If there is no open PR for it, create one from
    `.github/PULL_REQUEST_TEMPLATE/pull_request_template.md`, preserving its headings and order. Replace the tracking issue
    sentence with `No task issue by design.`; remove the `Closes #<issue>` placeholder; include `<!-- no-task-issue -->`.
    Keep the rest of the template and its checklist, fill the description, testing results and acceptance evidence accurately,
    assign `@me`, and add the appropriate type and impact labels.
-4. Read the PR number and current head SHA. Set the three status contexts to `pending` using the status commands documented in
+5. Read the PR number and current head SHA. Set the three status contexts to `pending` using the status commands documented in
    `.github/copilot-instructions.md`.
-5. Delegate PR Review to `pr-review-agent` in the current local session and wait for `PR Review` success on the current
+6. Delegate PR Review to `pr-review-agent` in the current local session and wait for `PR Review` success on the current
    head SHA. Delegate QA to `senior-qa-engineer` only after review succeeds and wait for `QA Agent` success on that SHA.
    Both use the PR description as scope and the PR number as the `issue` value in their agent-run records. QA is
    verification-only; neither agent pushes changes. DoD is manual only.
-6. Wait for in-progress checks using `gh pr checks <pr> -R martinslavov/rcas --watch`, then verify all ruleset-required
+7. Wait for in-progress checks using `gh pr checks <pr> -R martinslavov/rcas --watch`, then verify all ruleset-required
    checks and both agent commit statuses are successful on the current head SHA, there is no
    `needs-human-review` label, human PR comment or review, or unresolved blocker/major finding. If any gate is pending,
    failed, skipped, unknown, or cannot be determined, do not merge. Read the current ruleset and check runs/statuses with
    `gh pr checks <pr> -R martinslavov/rcas` and the commit status API; inspect paginated issue comments, PR reviews and
    inline review comments as described in `.github/copilot-instructions.md`. Honor a request to keep the PR open.
-7. When every gate passes and the user has not asked to keep it open, run
+8. When every gate passes and the user has not asked to keep it open, run
    `gh pr merge <pr> -R martinslavov/rcas --merge --delete-branch --match-head-commit <verified-head-sha>`.
-   Report the PR URL and actual merge status.
+   Report the PR URL and actual merge status. After completion, remove the temporary worktree if it is clean.

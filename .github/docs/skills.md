@@ -55,4 +55,4 @@ Arguments: `/create-pr-cloud [label[,label...]]`.
 |------------|-----------|
 | `/create-pr-cloud` | Creates/reuses a task issue and PR, then hands review, QA, bounded fixes and gated merge to cloud automation |
 | `/create-pr-cloud <label>` | Default labels plus the given ones; unknown labels are reported, not created; `needs-human-review` is refused |
-| `/create-pr-local` | Creates a PR without a task or tracking issue; the current local session runs PR Review and QA and merges after all gates pass. Failures stop for human action. |
+| `/create-pr-local` | Creates a PR without a task or tracking issue in a temporary linked worktree, carrying the caller's current tracked and untracked non-ignored edits into it; then runs PR Review and QA and merges after all gates pass. Failures stop for human action. |

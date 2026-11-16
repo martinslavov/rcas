@@ -27,6 +27,8 @@ class PrSkillContractsTest(unittest.TestCase):
     def test_local_pr_has_no_cloud_handoff_and_verifies_before_merge(self):
         skill = (SKILLS / "create-pr-local" / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("name: create-pr-local", skill)
+        self.assertIn("Worktree is mandatory", skill)
+        self.assertIn("carry all current tracked and untracked", skill)
         self.assertIn("<!-- no-task-issue -->", skill)
         self.assertIn("Do not add `<!-- ship-pr -->`", skill)
         self.assertIn("Delegate PR Review to `pr-review-agent`", skill)

@@ -164,10 +164,12 @@ failed orchestrator transition.
 
 - **Manual issue:** invoke `/create-issue` with the task description. Product Owner creates a TODO issue and stops; no worker,
   Architect, Engineer, branch, or PR starts. Implement it yourself later, or start a separate task flow when ready.
-- **Local PR:** invoke `/create-pr-local` for a small change without a task issue. The PR body contains
-  `<!-- no-task-issue -->`, so PR Issue Tracking skips its usual tracking issue. The current local session invokes PR Review
-  and then QA, verifies all current-head merge gates and merges if they pass. A failure stops for human action; an explicit
-  request to keep the PR open is honored. The local flow never adds `cloud-agent` or the cloud opt-in marker.
+- **Local PR:** invoke `/create-pr-local` for a small change without a task issue. The flow always creates a temporary linked
+  worktree, carries the caller's current tracked and untracked non-ignored edits into that worktree, and runs implementation,
+  review and QA there. The PR body contains `<!-- no-task-issue -->`, so PR Issue Tracking skips its usual tracking issue.
+  The current local session invokes PR Review and then QA, verifies all current-head merge gates and merges if they pass.
+  A failure stops for human action; an explicit request to keep the PR open is honored. The local flow never adds
+  `cloud-agent` or the cloud opt-in marker.
   Previously opted-in no-issue cloud PRs retain their existing guarded dispatch and merge behavior.
 
 ## Task-state record for every issue
