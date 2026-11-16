@@ -16,6 +16,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.sql.Timestamp;
 import java.util.Date;
+import java.util.function.Supplier;
 
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
@@ -24,7 +25,9 @@ import static com.gbp.rcas.config.Constants.CACHE_NAME_USER;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 @SpringBootTest
@@ -73,8 +76,41 @@ public class UserServiceTest {
     }
 
     @Test
-    @DisplayName("UserService.findById - Not found")
+    @DisplayName("UserService.findById - Success on cache miss resolves from repository")
     @Order(2)
+    void test_findById_Success_CacheMissResolvesFromRepository() {
+        Long userId = Long.valueOf(11);
+        var user = new User.UserBuilder()
+                .setId(userId)
+                .setUsername("cache-miss-user")
+                .setPassword("password")
+                .setEmail("cache.miss@example.com")
+                .setCreatedOn(new Timestamp(new Date().getTime()))
+                .createUser();
+
+        doReturn(Mono.just(user)).when(userRepository).findById(userId);
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Supplier<Mono<User>> retriever = invocation.getArgument(2);
+            return retriever.get();
+        }).when(cacheService).getCache(eq(userId), eq(CACHE_NAME_USER), any(), eq(User.class));
+
+        Mono<User> returnedUser = userService.findById(userId);
+
+        StepVerifier.create(returnedUser)
+                .assertNext(u -> assertAll(
+                        () -> Assertions.assertEquals(userId, u.getId()),
+                        () -> Assertions.assertEquals("cache-miss-user", u.getUsername())
+                ))
+                .verifyComplete();
+
+        verify(cacheService, times(1)).getCache(eq(userId), eq(CACHE_NAME_USER), any(), eq(User.class));
+        verify(userRepository, times(1)).findById(userId);
+    }
+
+    @Test
+    @DisplayName("UserService.findById - Not found")
+    @Order(3)
     void test_findById_NotFound() {
         // Given - Set up an empty cache result
         Long userId = Long.valueOf(9_999_999_999L);
@@ -92,7 +128,7 @@ public class UserServiceTest {
     }
 
     @Test
-    @Order(3)
+    @Order(4)
     @DisplayName("UserService.findById - IllegalArgumentException")
     public void test_findById_IllegalArgumentException() {
         // Given - Set up the cache service error
