@@ -297,6 +297,8 @@ RCAS logs only to the console (stdout), so the container runtime collects the lo
 
 Annotate a public method of a Spring bean with `@MeasureExecutionTime` (`com.gbp.rcas.aop`) to log `Class.method executed in N ms (success|error|cancelled)` at `INFO`. For `Mono`/`Flux` results the time runs from subscription to termination; other methods are timed synchronously. Arguments and results are never logged, and exceptions propagate unchanged. Only calls through the Spring proxy are measured (not self-invocation).
 
+Both public `CacheServiceImpl.getCache` overloads (single item and list) use it, so every subscribed and terminated cache read logs one `CacheServiceImpl.getCache executed in N ms (...)` entry at `INFO`.
+
 ## CI/CD (GitHub Actions)
 
 Workflows live in `.github/workflows`:

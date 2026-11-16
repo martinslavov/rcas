@@ -26,6 +26,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.SignalType;
 
+import com.gbp.rcas.aop.MeasureExecutionTime;
 import com.gbp.rcas.service.CacheService;
 
 @Service(value = "cacheService")
@@ -65,6 +66,7 @@ public class CacheServiceImpl implements CacheService {
     }
 
     @Override
+    @MeasureExecutionTime
     public <T> Mono<T> getCache(Long id, String cacheName, Supplier<Mono<T>> retriever, Class<T> cls) {
         Cache cache = cacheManager.getCache(cacheName);
         return measureLogicalRead(cacheName, OPERATION_ITEM, context ->
@@ -92,6 +94,7 @@ public class CacheServiceImpl implements CacheService {
     }
 
     @Override
+    @MeasureExecutionTime
     public <T> Flux<T> getCache(Long id, String cacheName, Class<T> cls, Supplier<Flux<T>> retriever) {
         Cache cache = cacheManager.getCache(cacheName);
         return measureLogicalListRead(cacheName, OPERATION_LIST, context ->
