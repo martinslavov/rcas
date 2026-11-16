@@ -2,10 +2,11 @@
 
 Write all repository documentation in English, including documentation updates, README content, skills, agent instructions, and workflow guides.
 
-These rules apply when task input starts with `TASK-NAME:<task-name>` (for example `TASK-NAME:code-review-agent` or `TASK-NAME:Code review agent`), optionally followed by `DEVELOPMENT: low|medium|high` and `TAG: <label[,label...]>`. Supported tags are `cloud-agent`, `local-agent`, `skip-architect`, and `skip-product-owner`. A `DESCRIPTION: <text>` prefix on the description is optional. The legacy order with `TAG: cloud-agent` on line 1 remains accepted, as does `LABEL:BACKLOG,TASK-NAME:<task-name>` with optional metadata after the task name. Tasks without a task-name control line are handled normally, without creating an issue or branch unless needed. Use `/create-pr-cloud` to hand a task-linked PR to cloud automation and `/create-pr-local` for local review of a PR without a task issue.
+These rules apply when task input starts with `TASK-NAME:<task-name>` (for example `TASK-NAME:code-review-agent` or `TASK-NAME:Code review agent`), optionally followed by `DEVELOPMENT: low|medium|high` and `TAG: <label[,label...]>`. Supported tags are `cloud-agent`, `local-agent`, `interactive-agent`, `skip-architect`, and `skip-product-owner`. A `DESCRIPTION: <text>` prefix on the description is optional. The legacy order with `TAG: cloud-agent` on line 1 remains accepted, as does `LABEL:BACKLOG,TASK-NAME:<task-name>` with optional metadata after the task name. Tasks without a task-name control line are handled normally, without creating an issue or branch unless needed. Use `/create-pr-cloud` to hand a task-linked PR to cloud automation and `/create-pr-local` for local review of a PR without a task issue.
 
-The supported task tags are `cloud-agent`, `local-agent`, `skip-architect`, and `skip-product-owner`; `cloud-agent` and
-`local-agent` are mutually exclusive. `/create-pr-local` is the no-task-issue PR path.
+The supported task tags are `cloud-agent`, `local-agent`, `interactive-agent`, `skip-architect`, and `skip-product-owner`.
+Execution tags are `cloud-agent`, `local-agent`, and `interactive-agent`; exactly 0 or 1 execution tags are allowed. When no
+execution tag is supplied, intake defaults to `interactive-agent`. `/create-pr-local` is the no-task-issue PR path.
 
 ## Task input and queue (Backlog / TODO)
 
@@ -13,9 +14,11 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 `.github/scripts/task_queue.sh list` prints open `TODO` issues oldest first. `task_queue.sh move` is an internal board projection only; agents must not use it to change task stages.
 
 - Canonical input starts with `TASK-NAME:<name>`, optionally followed by `DEVELOPMENT: low|medium|high`, then
-  `TAG: cloud-agent,local-agent,skip-architect,skip-product-owner` (any supported subset), and then the description. Metadata lines may
+  `TAG: cloud-agent,local-agent,interactive-agent,skip-architect,skip-product-owner` (any supported subset), and then the description. Metadata lines may
   appear in either order. The optional `DEVELOPMENT` value is recorded as a `development:<level>` issue label. An optional
   leading `DESCRIPTION:` prefix is stripped. Never include control lines in the issue title/body.
+- Execution tags are `cloud-agent`, `local-agent`, and `interactive-agent`; provide at most one. With none, intake applies
+  the default `interactive-agent` label for backward-compatible interactive local flow.
 - `skip-product-owner` means do not invoke `product-owner-agent`; the main agent parses the input and creates a concise task
   issue directly, preserving the supplied description and labeling it with all parsed metadata. Without this tag, follow
   the normal Product Owner intake.
@@ -57,8 +60,9 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 - Specifically, `TAG: cloud-agent,skip-architect,skip-product-owner` means neither Product Owner nor Architect is invoked:
   the main agent creates the issue directly from the parsed task name, description and labels, then stops. The cloud workflow
   skips Architect and dispatches Engineer directly; PR Review, QA, CI and merge gates still apply.
-- `TASK-NAME:<name>` (default, no TAG): the Product Owner creates the issue without `backlog`, `cloud-agent` or `local-agent`;
-  it lands in `TODO` for the interactive local flow and is not picked up by a background worker. Use `/create-issue` when
+- `TASK-NAME:<name>` (default, no TAG): the Product Owner creates the issue with the default `interactive-agent` label (and
+  without `backlog`, `cloud-agent` or `local-agent`); it lands in `TODO` for the interactive local flow and is not picked up
+  by a background worker. Use `/create-issue` when
   you want Product Owner intake only and will implement the issue yourself later.
 - `TASK-NAME:<name>` with `TAG: local-agent`: create an owner-authored issue through Product Owner unless
   `skip-product-owner` is present, in which case the main agent creates it directly. Report the URL and stop. The separately

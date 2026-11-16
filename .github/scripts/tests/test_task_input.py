@@ -30,8 +30,13 @@ class TaskInputTest(unittest.TestCase):
     def test_supported_tags_can_be_used_independently(self):
         parsed = parse_task_input("TASK-NAME:task\nTAG: skip-architect\nDo this")
 
-        self.assertEqual(("skip-architect",), parsed.labels)
+        self.assertEqual(("interactive-agent", "skip-architect"), parsed.labels)
         self.assertEqual("Do this", parsed.description)
+
+    def test_interactive_agent_tag_selects_interactive_flow(self):
+        parsed = parse_task_input("TASK-NAME:task\nTAG: interactive-agent,skip-architect\nDo this")
+
+        self.assertEqual(("interactive-agent", "skip-architect"), parsed.labels)
 
     def test_local_agent_tag_selects_local_worker(self):
         parsed = parse_task_input("TASK-NAME:task\nTAG: local-agent,skip-architect\nDo this")
@@ -54,12 +59,12 @@ class TaskInputTest(unittest.TestCase):
     def test_development_is_optional_and_case_insensitive(self):
         parsed = parse_task_input("TASK-NAME:task\nDEVELOPMENT: Medium\nDo this")
 
-        self.assertEqual(("development:medium",), parsed.labels)
+        self.assertEqual(("interactive-agent", "development:medium"), parsed.labels)
 
     def test_plain_task_name_keeps_local_default(self):
         parsed = parse_task_input("TASK-NAME:cloud-flow\nDo the work")
 
-        self.assertEqual(("cloud-flow", "Do the work", ()),
+        self.assertEqual(("cloud-flow", "Do the work", ("interactive-agent",)),
                          (parsed.task_name, parsed.description, parsed.labels))
 
     def test_legacy_tag_first_order_remains_supported(self):
@@ -71,7 +76,7 @@ class TaskInputTest(unittest.TestCase):
     def test_backlog_prefix_is_case_insensitive_and_keeps_backlog_label(self):
         parsed = parse_task_input("label:BACKLOG,TASK-NAME:cloud-flow\nDo the work")
 
-        self.assertEqual(("backlog",), parsed.labels)
+        self.assertEqual(("interactive-agent", "backlog"), parsed.labels)
         self.assertEqual("Do the work", parsed.description)
 
     def test_tag_on_second_line_combines_with_backlog_label(self):
@@ -96,7 +101,7 @@ class TaskInputTest(unittest.TestCase):
     def test_tag_later_in_description_is_not_a_control_line(self):
         parsed = parse_task_input("TASK-NAME:task\nDo this\nTAG: cloud-agent")
 
-        self.assertEqual((), parsed.labels)
+        self.assertEqual(("interactive-agent",), parsed.labels)
         self.assertEqual("Do this\nTAG: cloud-agent", parsed.description)
 
     def test_invalid_inputs_are_rejected(self):
@@ -109,7 +114,10 @@ class TaskInputTest(unittest.TestCase):
             "TASK-NAME:task\nTAG: cloud-agent extra",
             "TASK-NAME:task\nTAG: cloud-agent,other",
             "TASK-NAME:task\nTAG: cloud-agent,local-agent",
+            "TASK-NAME:task\nTAG: cloud-agent,interactive-agent",
+            "TASK-NAME:task\nTAG: local-agent,interactive-agent",
             "TASK-NAME:task\nTAG: cloud-agent\nTAG: local-agent",
+            "TASK-NAME:task\nTAG: local-agent\nTAG: interactive-agent",
             "TASK-NAME:task\nTAG: cloud-agent, skip-architect",
             "TASK-NAME:task\nDEVELOPMENT: hight",
             "TASK-NAME:task\nDEVELOPMENT: low\nDEVELOPMENT: high",
