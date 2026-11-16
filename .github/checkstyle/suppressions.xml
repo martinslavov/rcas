@@ -3,6 +3,8 @@
 <suppressions>
     <!-- snake_case user_id is mapped to the database column and the JSON field -->
     <suppress checks="MethodName|MemberName|ParameterName" files="Subscription\.java"/>
+    <!-- ProceedingJoinPoint.proceed() declares Throwable, so the around advice must too -->
+    <suppress checks="IllegalThrows" files="ExecutionTimeAspect\.java"/>
     <!-- Tests use given_when_then / test_method_case naming -->
     <suppress checks="MethodName" files="[\\/]src[\\/]test[\\/]"/>
 </suppressions>

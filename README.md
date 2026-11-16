@@ -293,6 +293,10 @@ Set `RCAS_BASE_URL` to test a service running somewhere else. `make logs` prints
 
 RCAS logs only to the console (stdout), so the container runtime collects the logs; no log files are written. Use `make logs` or `docker compose --profile app logs rcas` to read them.
 
+#### Measuring execution time
+
+Annotate a public method of a Spring bean with `@MeasureExecutionTime` (`com.gbp.rcas.aop`) to log `Class.method executed in N ms (success|error|cancelled)` at `INFO`. For `Mono`/`Flux` results the time runs from subscription to termination; other methods are timed synchronously. Arguments and results are never logged, and exceptions propagate unchanged. Only calls through the Spring proxy are measured (not self-invocation).
+
 ## CI/CD (GitHub Actions)
 
 Workflows live in `.github/workflows`:
