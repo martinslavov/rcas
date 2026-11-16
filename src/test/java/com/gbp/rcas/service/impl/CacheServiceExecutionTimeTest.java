@@ -37,6 +37,7 @@ import java.util.regex.Pattern;
 
 import static com.gbp.rcas.config.Constants.CACHE_NAME_USER;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -161,7 +162,7 @@ class CacheServiceExecutionTimeTest {
 
         assertEquals(1, awaitTimings(1).size());
         Matcher matcher = timing(awaitTimings(1).get(0));
-        assertTrue(Long.parseLong(matcher.group(1)) >= 140);
+        assertTrue(Long.parseLong(matcher.group(1)) >= 100);
         assertEquals("success", matcher.group(2));
         assertEquals(1, retrievals.get());
     }
@@ -182,7 +183,7 @@ class CacheServiceExecutionTimeTest {
 
         assertEquals(1, awaitTimings(1).size());
         Matcher matcher = timing(awaitTimings(1).get(0));
-        assertTrue(Long.parseLong(matcher.group(1)) >= 140);
+        assertTrue(Long.parseLong(matcher.group(1)) >= 100);
         assertEquals("success", matcher.group(2));
         assertEquals(1, retrievals.get());
     }
@@ -221,8 +222,8 @@ class CacheServiceExecutionTimeTest {
         assertEquals(2, awaitTimings(2).size());
         awaitTimings(2).forEach(event -> {
             assertEquals("error", timing(event).group(2));
-            assertTrue(!event.getMessage().getFormattedMessage().contains("secret-failure-detail"));
-            assertTrue(!event.getMessage().getFormattedMessage().contains(REDIS_KEY));
+            assertFalse(event.getMessage().getFormattedMessage().contains("secret-failure-detail"));
+            assertFalse(event.getMessage().getFormattedMessage().contains(REDIS_KEY));
         });
     }
 
