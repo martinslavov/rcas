@@ -442,7 +442,7 @@ The RCAS Tracking board has the Status columns `Backlog`, `Assessment`, `Definin
 | `TASK-NAME:<name>` without TAG | Product Owner creates a TODO issue for the interactive local flow; no background worker starts |
 | `/create-issue` | Product Owner creates a TODO issue only; no implementation starts, so you can finish it yourself later |
 | `/create-pr-cloud` | Creates/reuses a task issue and PR; cloud automation runs review, QA, bounded fixes and gated automatic merge |
-| `/create-pr-local` | Creates a PR without a task issue; the local session runs PR Review and QA, then merges when all gates pass. Failures stop for human action |
+| `/create-pr-local` | Creates a PR without a task issue in a temporary linked worktree, carrying current tracked and untracked non-ignored edits into it; the local session runs PR Review and QA, then merges when all gates pass. Failures stop for human action |
 | `LABEL:BACKLOG,TASK-NAME:<name>` then optional metadata | Issue created in `Backlog`; `backlog` and any parsed metadata labels are set |
 
 #### Comparing task tags
