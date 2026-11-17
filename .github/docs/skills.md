@@ -56,3 +56,9 @@ Arguments: `/create-pr-cloud [label[,label...]]`.
 | `/create-pr-cloud` | Creates/reuses a task issue and PR, then hands review, QA, bounded fixes and gated merge to cloud automation |
 | `/create-pr-cloud <label>` | Default labels plus the given ones; unknown labels are reported, not created; `needs-human-review` is refused |
 | `/create-pr-local` | Creates a PR without a task or tracking issue in a temporary linked worktree, carrying the caller's current tracked and untracked non-ignored edits into it; then runs PR Review and QA and merges after all gates pass. Failures stop for human action. |
+
+### `handoff-pr-review`
+
+File: `.github/skills/handoff-pr-review/SKILL.md`. Invoke with `/handoff-pr-review <pr-number>` when an existing task-linked PR is open and you want to re-run the cloud handoff that starts `PR Review` and then `QA Agent`.
+
+It runs `.github/scripts/execute_pr_check.sh <pr-number>`, which validates the PR and executes `orchestrator.py intake-pr-review <issue> --pr <pr> --cloud-agent`.
