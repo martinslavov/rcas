@@ -339,6 +339,7 @@ Recommended repository settings:
 PRs from forks get a read-only token, so PR Issue Tracking cannot create issues for them.
 
 See [Security and permissions](.github/docs/security.md) for per-workflow permissions, SHA pinning and Dependabot, fork PR behaviour, token scopes (`PROJECT_TOKEN`, read-only `DOCKERHUB_TOKEN`, and write/delete `DOCKERHUB_PUSH_TOKEN`) and per-agent permissions.
+For naming standards of workflow, job and check labels, see [Workflow naming conventions](.github/docs/workflow-naming-conventions.md).
 
 ## Branch workflow
 
