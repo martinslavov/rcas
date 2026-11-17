@@ -282,10 +282,13 @@ Component tests live in the separate Gradle subproject `component-tests`. They c
 ```bash
 make build             # build the jar used by the Docker image
 make up                # build the image, start the stack and wait until it is healthy
-make component-tests   # ./gradlew :component-tests:componentTest against http://localhost:8080/app
-make sanity-tests      # only the fast sanity (smoke) tests (@Tag("sanity"))
+make component-tests   # readiness check + deterministic DB/Redis reset + component test suite
+make sanity-tests      # readiness check + deterministic DB/Redis reset + fast smoke tests (@Tag("sanity"))
 make down              # stop the stack and remove containers, network and volumes
 ```
+
+Both test targets reset PostgreSQL and Redis test data and restart RCAS before execution, so each run starts from the same
+baseline and does not inherit stale cache state from earlier runs.
 
 Set `RCAS_BASE_URL` to test a service running somewhere else. `make logs` prints the container logs.
 

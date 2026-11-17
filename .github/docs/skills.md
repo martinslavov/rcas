@@ -57,8 +57,18 @@ Arguments: `/create-pr-cloud [label[,label...]]`.
 | `/create-pr-cloud <label>` | Default labels plus the given ones; unknown labels are reported, not created; `needs-human-review` is refused |
 | `/create-pr-local` | Creates a PR without a task or tracking issue in a temporary linked worktree, carrying the caller's current tracked and untracked non-ignored edits into it; then runs PR Review and QA and merges after all gates pass. Failures stop for human action. |
 
-### `handoff-pr-review`
+### `handoff-pr-review-cloud`
 
-File: `.github/skills/handoff-pr-review/SKILL.md`. Invoke with `/handoff-pr-review <pr-number>` when an existing task-linked PR is open and you want to re-run the cloud handoff that starts `PR Review` and then `QA Agent`.
+File: `.github/skills/handoff-pr-review-cloud/SKILL.md`. Invoke with `/handoff-pr-review-cloud <pr-number>` when an existing task-linked PR is open and you want to re-run the cloud handoff that starts `PR Review` and then `QA Agent`.
 
 It runs `.github/scripts/execute_pr_check.sh <pr-number>`, which validates the PR and executes `orchestrator.py intake-pr-review <issue> --pr <pr> --cloud-agent`.
+
+### `handoff-pr-review-agent`
+
+File: `.github/skills/handoff-pr-review-agent/SKILL.md`. Invoke with `/handoff-pr-review-agent <pr-number>` for a local-flow PR (`<!-- no-task-issue -->`) to initialize local statuses and then run local PR Review and QA agents in sequence.
+
+It runs `.github/scripts/execute_pr_check_local.sh <pr-number>`, which validates local-flow markers and sets `PR Review`, `QA Agent`, and `Definition of Done` to `pending` on the PR head SHA.
+
+### `handoff-pr-review` (legacy alias)
+
+File: `.github/skills/handoff-pr-review/SKILL.md`. Backward-compatible alias that points to the split commands above.
