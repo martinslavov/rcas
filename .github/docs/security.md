@@ -128,6 +128,14 @@ other security-sensitive changes.
 - Resolve a SHA with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`; for an annotated tag (`type: tag`) dereference
   it with `gh api repos/<owner>/<repo>/git/tags/<sha>` and use the commit SHA.
 
+## Dependency hygiene cadence
+
+- Dependabot runs weekly for `gradle`, `github-actions`, and `docker` ecosystems and labels PRs with
+  `dependencies` and `security`.
+- The `ci-dependency-review.yml` check remains required for every PR and blocks vulnerable dependency introductions with
+  `high` or `critical` severity.
+- CVE handling and escalation are defined in `.github/docs/cve-triage-policy.md`.
+
 ## Fork pull requests
 
 Workflows triggered by `pull_request` from a fork get a read-only token and no repository secrets.
