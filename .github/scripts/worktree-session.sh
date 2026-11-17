@@ -24,10 +24,12 @@ usage() {
   cat >&2 <<'EOF'
 usage:
   worktree-session.sh start <session-name> [--open]
+  worktree-session.sh start <session-name> --emit-cd
   worktree-session.sh cleanup <session-name>
 
 Session names must contain lowercase letters, digits, and hyphens, and start with a letter or digit.
-After start, the script switches to the created worktree (interactive shell handoff when executed directly).
+After start, source the script to switch your current shell automatically.
+When executed directly, it prints the exact `cd` command and exits (non-blocking).
 IDE auto-open is disabled by default; use --open to launch JetBrains.
 Set WORKTREE_SESSION_NO_CHDIR=1 to disable automatic switching.
 EOF
@@ -85,10 +87,15 @@ start_session() {
 }
 
 switch_to_started_worktree() {
-  local target="$1"
+  local target="$1" emit_cd_only="${2:-false}"
 
   [[ -n "$target" ]] || return 0
   [[ "${WORKTREE_SESSION_NO_CHDIR:-0}" == "1" ]] && return 0
+
+  if [[ "$emit_cd_only" == true ]]; then
+    printf 'cd %q\n' "$target"
+    return 0
+  fi
 
   if (( is_sourced )); then
     cd "$target"
@@ -96,11 +103,9 @@ switch_to_started_worktree() {
     return 0
   fi
 
-  if [[ -t 0 && -t 1 ]]; then
-    local shell_bin="${SHELL:-/bin/zsh}"
-    printf 'Switching terminal session to %s (exit this shell to return).\n' "$target"
-    exec "$shell_bin" -i -c "cd \"$target\" && exec \"$shell_bin\" -i"
-  fi
+  printf 'Worktree ready: %s\n' "$target"
+  printf 'Run this to switch in the current terminal:\n'
+  printf 'cd %q\n' "$target"
 }
 
 cleanup_session() {
@@ -153,6 +158,10 @@ case "$command" in
       start_session "$name" false
     elif [[ $# -eq 1 && "$1" == "--open" ]]; then
       start_session "$name" true
+    elif [[ $# -eq 1 && "$1" == "--emit-cd" ]]; then
+      start_session "$name" false 1>&2
+      switch_to_started_worktree "$last_started_worktree" true
+      exit 0
     elif [[ $# -eq 1 && "$1" == "--no-open" ]]; then
       start_session "$name" false
     else
