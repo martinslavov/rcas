@@ -21,6 +21,7 @@ concurrency:
 
 jobs:
   dispatch:
+    name: Dispatch
     if: >-
       github.event_name == 'issues' ||
       github.event_name == 'pull_request' ||
