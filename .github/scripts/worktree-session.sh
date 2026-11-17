@@ -16,14 +16,19 @@ die() {
   exit "$code"
 }
 
+warn() {
+  printf '%s\n' "$*" >&2
+}
+
 usage() {
   cat >&2 <<'EOF'
 usage:
-  worktree-session.sh start <session-name> [--no-open]
+  worktree-session.sh start <session-name> [--open]
   worktree-session.sh cleanup <session-name>
 
 Session names must contain lowercase letters, digits, and hyphens, and start with a letter or digit.
 After start, the script switches to the created worktree (interactive shell handoff when executed directly).
+IDE auto-open is disabled by default; use --open to launch JetBrains.
 Set WORKTREE_SESSION_NO_CHDIR=1 to disable automatic switching.
 EOF
   if (( is_sourced )); then
@@ -70,10 +75,11 @@ start_session() {
 
   if [[ "$open_ide" == true ]]; then
     if ! command -v open >/dev/null 2>&1; then
-      die 1 "worktree created, but macOS 'open' is unavailable; open the path manually: $target"
+      warn "worktree created, but macOS 'open' is unavailable; open the path manually: $target"
+      return 0
     fi
     if ! open -a "${JETBRAINS_APP:-IntelliJ IDEA}" "$target"; then
-      die 1 "worktree created, but JetBrains could not open it; open the path manually: $target"
+      warn "worktree created, but JetBrains could not open it; open the path manually: $target"
     fi
   fi
 }
@@ -144,7 +150,9 @@ shift 2
 case "$command" in
   start)
     if [[ $# -eq 0 ]]; then
-      start_session "$name"
+      start_session "$name" false
+    elif [[ $# -eq 1 && "$1" == "--open" ]]; then
+      start_session "$name" true
     elif [[ $# -eq 1 && "$1" == "--no-open" ]]; then
       start_session "$name" false
     else
