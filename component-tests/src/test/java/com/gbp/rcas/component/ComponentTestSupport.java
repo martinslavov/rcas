@@ -18,6 +18,7 @@ import java.time.Duration;
 abstract class ComponentTestSupport {
 
     private static final int READY_TIMEOUT_SECONDS = 90;
+    private static final int REQUIRED_HEALTHY_CHECKS = 3;
 
     private static final String BASE_URL =
             System.getenv().getOrDefault("RCAS_BASE_URL", "http://localhost:8080/app");
@@ -32,6 +33,7 @@ abstract class ComponentTestSupport {
     static void waitUntilServiceIsReady() {
         long deadlineNanos = System.nanoTime() + Duration.ofSeconds(READY_TIMEOUT_SECONDS).toNanos();
         IllegalStateException lastFailure = null;
+        int healthyChecks = 0;
 
         while (System.nanoTime() < deadlineNanos) {
             try {
@@ -41,11 +43,19 @@ abstract class ComponentTestSupport {
                     if ("UP".equals(body.path("status").asText())
                             && "UP".equals(body.path("components").path("r2dbc").path("status").asText())
                             && "UP".equals(body.path("components").path("redis").path("status").asText())) {
-                        return;
+                        healthyChecks++;
+                        if (healthyChecks >= REQUIRED_HEALTHY_CHECKS) {
+                            return;
+                        }
+                    } else {
+                        healthyChecks = 0;
                     }
+                } else {
+                    healthyChecks = 0;
                 }
                 lastFailure = new IllegalStateException("Health endpoint is not fully UP yet");
             } catch (IllegalStateException ex) {
+                healthyChecks = 0;
                 lastFailure = ex;
             }
 

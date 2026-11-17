@@ -19,9 +19,9 @@ TRUNCATE TABLE \"subscription\", \"user_t\" RESTART IDENTITY CASCADE;
 
 INSERT INTO \"user_t\" (id, username, password, email, created_on, last_login)
 VALUES
-    (1, 'martin', 'password', 'slavoff.martin@gmail.com', NOW(), NULL),
-    (2, 'test1', 'password', 'test1.test1@gmail.com', NOW(), NULL),
-    (3, 'test2', 'password', 'test2.test2@gmail.com', NOW(), NULL);
+    (1, 'martin', 'password', 'slavoff.martin@gmail.com', TIMESTAMP '2024-01-01 00:00:00', NULL),
+    (2, 'test1', 'password', 'test1.test1@gmail.com', TIMESTAMP '2024-01-01 00:00:00', NULL),
+    (3, 'test2', 'password', 'test2.test2@gmail.com', TIMESTAMP '2024-01-01 00:00:00', NULL);
 
 INSERT INTO \"subscription\" (id, type, active, user_id)
 VALUES
@@ -34,7 +34,9 @@ SELECT setval('subscription_id_seq', (SELECT MAX(id) FROM \"subscription\"));
 COMMIT;
 SQL"
 
-bash -lc "$COMPOSE_CMD exec -T redis redis-cli FLUSHALL"
+bash -lc "$COMPOSE_CMD exec -T postgres psql -U test -d testdb -v ON_ERROR_STOP=1 -tAc \"SELECT COUNT(*) FROM \\\"user_t\\\"\" | grep -qx '3'"
+bash -lc "$COMPOSE_CMD exec -T postgres psql -U test -d testdb -v ON_ERROR_STOP=1 -tAc \"SELECT COUNT(*) FROM \\\"subscription\\\"\" | grep -qx '3'"
+bash -lc "$COMPOSE_CMD exec -T redis redis-cli FLUSHALL SYNC | grep -q '^OK$'"
 bash -lc "$COMPOSE_CMD --profile app restart rcas"
 
 COMPOSE="$COMPOSE_CMD" "$SCRIPT_DIR/wait-for-stack-ready.sh"
