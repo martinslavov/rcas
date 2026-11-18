@@ -53,7 +53,7 @@ WHERE NOT EXISTS (
 );
 
 CREATE TABLE IF NOT EXISTS rcas.user_t (
-    id INTEGER NOT NULL,
+    id INTEGER NOT NULL DEFAULT nextval('rcas.user_t_id_seq'::REGCLASS),
     username VARCHAR(50) NOT NULL,
     password VARCHAR(50) NOT NULL,
     email VARCHAR(255) NOT NULL,
@@ -64,7 +64,30 @@ CREATE TABLE IF NOT EXISTS rcas.user_t (
         FOREIGN KEY (id, username, email, created_on)
         REFERENCES rcas.user_identity (id, username, email, created_on)
 ) PARTITION BY RANGE (created_on);
-ALTER SEQUENCE rcas.user_t_id_seq OWNED BY rcas.user_t.id;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_attribute a
+        JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+        WHERE a.attrelid = 'rcas.user_t'::REGCLASS
+          AND a.attname = 'id'
+          AND pg_get_expr(d.adbin, d.adrelid) LIKE '%user_t_id_seq%'
+    ) THEN
+        RAISE EXCEPTION 'rcas.user_t.id must default to rcas.user_t_id_seq; recreate the local Citus volumes to apply this schema change';
+    END IF;
+END
+$$;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_dist_partition
+        WHERE logicalrelid = 'rcas.user_t'::REGCLASS
+    ) THEN
+        ALTER SEQUENCE rcas.user_t_id_seq OWNED BY rcas.user_t.id;
+    END IF;
+END
+$$;
 
 CREATE TABLE IF NOT EXISTS rcas.user_t_default
     PARTITION OF rcas.user_t DEFAULT;
@@ -105,7 +128,7 @@ WHERE NOT EXISTS (
 SELECT rcas.ensure_user_day_partition(CURRENT_DATE + 1);
 
 CREATE TABLE IF NOT EXISTS rcas.subscription (
-    id INTEGER NOT NULL,
+    id INTEGER NOT NULL DEFAULT nextval('rcas.subscription_id_seq'::REGCLASS),
     type VARCHAR(50) NOT NULL,
     active INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
@@ -114,7 +137,30 @@ CREATE TABLE IF NOT EXISTS rcas.subscription (
         FOREIGN KEY (type, id)
         REFERENCES rcas.subscription_type_registry (type, subscription_id)
 ) PARTITION BY HASH (id);
-ALTER SEQUENCE rcas.subscription_id_seq OWNED BY rcas.subscription.id;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_attribute a
+        JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+        WHERE a.attrelid = 'rcas.subscription'::REGCLASS
+          AND a.attname = 'id'
+          AND pg_get_expr(d.adbin, d.adrelid) LIKE '%subscription_id_seq%'
+    ) THEN
+        RAISE EXCEPTION 'rcas.subscription.id must default to rcas.subscription_id_seq; recreate the local Citus volumes to apply this schema change';
+    END IF;
+END
+$$;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_dist_partition
+        WHERE logicalrelid = 'rcas.subscription'::REGCLASS
+    ) THEN
+        ALTER SEQUENCE rcas.subscription_id_seq OWNED BY rcas.subscription.id;
+    END IF;
+END
+$$;
 
 CREATE TABLE IF NOT EXISTS rcas.subscription_p0 PARTITION OF rcas.subscription
     FOR VALUES WITH (MODULUS 4, REMAINDER 0);

@@ -286,6 +286,8 @@ make citus-down
 restarting Compose to migrate an existing PostgreSQL database or copy its data into Citus. For disposable local data,
 recreating the Citus volumes initializes the schema but deletes all database data. Keeping existing user data requires a
 separately reviewed migration and rollback plan covering references, registry validation, sequences, grants and caches.
+The Citus initializer rejects older distributed tables whose shard-key ID columns lack sequence defaults; Citus cannot
+apply those defaults to an already-distributed shard key. Back up any data before recreating such local volumes.
 The PostgreSQL migration and test-support scripts remain available for Testcontainers. Compose startup uses the Citus
 initializer, while `make startup-service-records-populator` and `make performance-vacuum-database` use Citus-specific
 scripts; the PostgreSQL versions remain unchanged for Testcontainers.

@@ -16,6 +16,8 @@ SET citus.multi_shard_modify_mode TO 'sequential';
 
 DROP SCHEMA IF EXISTS citus_poc CASCADE;
 CREATE SCHEMA citus_poc;
+CREATE SEQUENCE citus_poc.user_t_id_seq;
+CREATE SEQUENCE citus_poc.subscription_id_seq;
 
 CREATE TABLE citus_poc.user_identity (
     id INTEGER PRIMARY KEY,
@@ -34,7 +36,7 @@ CREATE TABLE citus_poc.subscription_type_registry (
 SELECT create_reference_table('citus_poc.subscription_type_registry');
 
 CREATE TABLE citus_poc.user_t (
-    id INTEGER NOT NULL,
+    id INTEGER NOT NULL DEFAULT nextval('citus_poc.user_t_id_seq'::REGCLASS),
     username VARCHAR(50) NOT NULL,
     password VARCHAR(50) NOT NULL,
     email VARCHAR(255) NOT NULL,
@@ -45,6 +47,7 @@ CREATE TABLE citus_poc.user_t (
         FOREIGN KEY (id, username, email, created_on)
         REFERENCES citus_poc.user_identity (id, username, email, created_on)
 ) PARTITION BY RANGE (created_on);
+ALTER SEQUENCE citus_poc.user_t_id_seq OWNED BY citus_poc.user_t.id;
 
 CREATE TABLE citus_poc.user_t_default
     PARTITION OF citus_poc.user_t DEFAULT;
@@ -77,7 +80,7 @@ SELECT create_distributed_table('citus_poc.user_t', 'id', colocate_with => 'none
 SELECT citus_poc.ensure_user_day_partition(CURRENT_DATE + 1);
 
 CREATE TABLE citus_poc.subscription (
-    id INTEGER NOT NULL,
+    id INTEGER NOT NULL DEFAULT nextval('citus_poc.subscription_id_seq'::REGCLASS),
     type VARCHAR(50) NOT NULL,
     active INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
@@ -86,6 +89,7 @@ CREATE TABLE citus_poc.subscription (
         FOREIGN KEY (type, id)
         REFERENCES citus_poc.subscription_type_registry (type, subscription_id)
 ) PARTITION BY HASH (id);
+ALTER SEQUENCE citus_poc.subscription_id_seq OWNED BY citus_poc.subscription.id;
 
 CREATE TABLE citus_poc.subscription_p0 PARTITION OF citus_poc.subscription
     FOR VALUES WITH (MODULUS 4, REMAINDER 0);
@@ -126,6 +130,18 @@ VALUES
     (1002, 'type-2', 0, 1),
     (1003, 'type-3', 1, 4);
 
+INSERT INTO citus_poc.user_identity (id, username, email, created_on)
+VALUES (5, 'user-5', 'user-5@example.test', CURRENT_DATE + 1);
+SELECT setval('citus_poc.user_t_id_seq', 4, true);
+INSERT INTO citus_poc.user_t (username, password, email, created_on)
+VALUES ( 'user-5', 'password', 'user-5@example.test', CURRENT_DATE + 1);
+
+INSERT INTO citus_poc.subscription_type_registry (type, subscription_id)
+VALUES ('type-4', 1004);
+SELECT setval('citus_poc.subscription_id_seq', 1003, true);
+INSERT INTO citus_poc.subscription (type, active, user_id)
+VALUES ('type-4', 1, 4);
+
 DO $$
 BEGIN
     IF (
@@ -150,6 +166,18 @@ BEGIN
         WHERE user_id = 1
     ) <> 2 THEN
         RAISE EXCEPTION 'Expected both subscriptions for user 1 on its colocated shard';
+    END IF;
+
+    IF (
+        SELECT id FROM citus_poc.user_t WHERE username = 'user-5'
+    ) <> 5 THEN
+        RAISE EXCEPTION 'The distributed user table did not generate the expected ID';
+    END IF;
+
+    IF (
+        SELECT id FROM citus_poc.subscription WHERE type = 'type-4'
+    ) <> 1004 THEN
+        RAISE EXCEPTION 'The distributed subscription table did not generate the expected ID';
     END IF;
 
     IF (
