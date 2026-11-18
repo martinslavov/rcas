@@ -42,7 +42,6 @@ public class UserHandlerIntegrationTest {
         @Override
         public void initialize(ConfigurableApplicationContext configurableApplicationContext) {
             postgreSQLContainer = new PostgreSQLContainer<>("postgres:15.2")
-                    .withInitScript("init.sql")
                     .withCopyFileToContainer(MountableFile.forClasspathResource("db/migration/"), "/docker-entrypoint-initdb.d/");
             postgreSQLContainer.start();
             logger.info("container.getFirstMappedPort():: {}", postgreSQLContainer.getFirstMappedPort());

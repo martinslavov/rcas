@@ -1,6 +1,7 @@
 package com.gbp.rcas.repository;
 
 import com.gbp.rcas.model.User;
+import com.gbp.rcas.model.Subscription;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
@@ -55,7 +56,6 @@ public class UserRepositoryTest {
         @Override
         public void initialize(ConfigurableApplicationContext configurableApplicationContext) {
             postgreSQLContainer = new PostgreSQLContainer<>("postgres:15.2")
-                    .withInitScript("init.sql")
                     .withCopyFileToContainer(MountableFile.forClasspathResource("db/migration/"), "/docker-entrypoint-initdb.d/");
             postgreSQLContainer.start();
             logger.info("container.getFirstMappedPort():: {}", postgreSQLContainer.getFirstMappedPort());
@@ -83,6 +83,27 @@ public class UserRepositoryTest {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private SubscriptionRepository subscriptionRepository;
+
+    @Test
+    void subscriptionRepositoryReadsAndWritesPartitionedRows() {
+        Subscription row = new Subscription(null, "repository-partition-test", 1, 12345);
+        template.insert(row)
+                .flatMap(saved -> subscriptionRepository.findById(saved.getId()))
+                .as(StepVerifier::create)
+                .assertNext(saved -> {
+                    assertThat(saved.getType()).isEqualTo("repository-partition-test");
+                    assertThat(saved.getUser_id()).isEqualTo(12345);
+                })
+                .verifyComplete();
+
+        subscriptionRepository.findSubscriptionsByUserId(12345L)
+                .as(StepVerifier::create)
+                .assertNext(saved -> assertThat(saved.getType()).isEqualTo("repository-partition-test"))
+                .verifyComplete();
+    }
 
 //    @BeforeEach
 //    public void setup() throws IOException, InterruptedException {
