@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 HEALTH_TIMEOUT ?= 180
 
-.PHONY: build up down logs verify-stack-ready reset-test-data component-tests sanity-tests monitoring-up monitoring-down startup-service-records-populator vacuum-snapshot
+.PHONY: build up down logs verify-stack-ready reset-test-data component-tests sanity-tests monitoring-up monitoring-down startup-service-records-populator performance-vacuum-database vacuum-snapshot
 
 ## Build the artifacts used by the Docker image: the executable jar and the health check class (build/healthcheck)
 build:
@@ -46,6 +46,10 @@ monitoring-down:
 ## Seed the running PostgreSQL database with the startup service records
 startup-service-records-populator:
 	COMPOSE="$(COMPOSE)" ./scripts/startup-service-records-populator.sh
+
+## Add synthetic write churn for local PostgreSQL vacuum/partition analysis
+performance-vacuum-database:
+	$(COMPOSE) exec -T postgres psql -U test -d testdb -v ON_ERROR_STOP=1 < db.migration/performance_vacuum_database.sql
 
 ## Capture a PostgreSQL vacuum/autovacuum snapshot from the running stack (optional OUT=path)
 vacuum-snapshot:

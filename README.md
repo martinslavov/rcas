@@ -210,15 +210,42 @@ Check row equality before the DROP, and check constraints, generated IDs and per
 rollback of a customized deployment requires a separately rehearsed dependency/privilege plan. If the retained table is
 gone, restore from backup and reconcile all writes since the backup instead.
 
-**Operations and future user partitioning:** Monitor per-child size, index bloat, autovacuum and analyze activity, as well
+**Operations:** Monitor per-child size, index bloat, autovacuum and analyze activity, as well
 as parent statistics and query plans; each child needs vacuum/analyze and index maintenance. HASH does not provide
 time-based detach/drop retention, and more partitions increase catalog/planning overhead. Monitor the registry as a
-central write/uniqueness bottleneck. For a future `user_t` rollout, investigate HASH on immutable `id` to retain ID-only
-primary keys and references, but global unique `username` and `email` need independently enforced registries (or an
-approved contract change). Inventory references, external dependencies, cache and query patterns, orphan subscriptions,
-operational load and PostgreSQL limits first; rehearse a locked copy/swap with backup, validation and post-write rollback
-as above. Adding user foreign keys, partition rebalancing, retention policy and automated migrations are follow-up work,
-not part of this upgrade.
+central write/uniqueness bottleneck. Adding user foreign keys, partition rebalancing, retention policy and automated
+migrations are follow-up work, not part of this upgrade.
+
+### Daily user partitions
+
+Fresh databases partition `user_t` by the timestamp column `created_on`. The startup SQL creates three daily
+`user_t_YYYYMMDD` partitions and seeds users on those three dates. The optional startup populator also uses three dates
+for users `1000`–`1002`, retains existing rows and never lowers either ID sequence. It still supports legacy unpartitioned
+user tables after a subscription-only migration.
+
+`user_identity` enforces globally unique IDs, usernames and emails with an AFTER row trigger and deferred foreign keys
+in both directions. The application still looks up users by ID; a non-unique ID index on each partition supports those
+lookups, but an ID-only query cannot prune date partitions. PostgreSQL no longer accepts new foreign keys referencing
+only `user_t.id`; any future reference must be designed against the registry or the composite key.
+Do not disable triggers/constraints, detach/drop partitions or modify the registry outside controlled maintenance.
+Truncating users requires `TRUNCATE user_t RESTART IDENTITY CASCADE` to also clear the registry.
+
+Provision additional days before inserting their records:
+
+```sql
+SELECT public.ensure_user_day_partition(CURRENT_DATE + 1);
+```
+
+Dates without a dedicated partition route to `user_t_default`. Creating a partition fails explicitly if that day's rows
+already exist in the default partition; move them under a separately planned write freeze before retrying.
+Partition creation is explicit, not a daily scheduler. New partitions receive the user autovacuum settings, and
+`V4__AutovacuumTuning.sql` tunes the leaves of both partitioned tables instead of their storage-less parents.
+
+**Existing databases:** this user schema change applies to fresh initialization only. Do not execute `init.sql` against
+an existing database and do not expect restarting Compose to migrate it. For disposable local data, recreating the
+PostgreSQL container/volume initializes the new schema, but deletes all database data. Keeping existing user data requires
+a separately reviewed migration and rollback plan covering references, registry validation, sequences, grants and caches.
+The existing subscription migration remains unchanged and is not a user migration.
 
 ## Monitoring (profile `monitoring`)
 
@@ -243,7 +270,7 @@ To populate the running stack with additional predictable records for the user a
 make build && make monitoring-up && make startup-service-records-populator
 ```
 
-The populator adds users `1000`, `1001` and `1002`; user `1000` has subscriptions `1001`–`1003`, user `1001` has none,
+The populator adds users `1000`, `1001` and `1002` on three consecutive dates; user `1000` has subscriptions `1001`–`1003`, user `1001` has none,
 and user `1002` has subscription `1004`. It is safe to run repeatedly and leaves existing rows unchanged. If you have
 already requested these IDs before seeding, cached empty results may remain visible until the cache entries expire
 (24 hours by default) or the service is restarted. Run the populator before testing the endpoints to avoid stale cache
@@ -357,6 +384,22 @@ docker compose exec -T postgres psql -U test -d testdb -v ON_ERROR_STOP=1 -c 'VA
 ```
 
 Avoid `VACUUM FULL` in normal operations. It rewrites the whole table, requires stronger locking, and can block application traffic. Reserve it for controlled maintenance windows with rollback and recovery planning.
+
+### Synthetic partition/vacuum workload (non-production)
+
+With the monitoring stack and the new user schema initialized, run:
+
+```bash
+make performance-vacuum-database
+make vacuum-snapshot OUT=build/reports/vacuum-after-workload.txt
+```
+
+`db.migration/performance_vacuum_database.sql` inserts 30,000 synthetic users across three days, updates their
+`last_login`, deletes every tenth row and runs `ANALYZE`. It does not execute `VACUUM` or disable autovacuum.
+Re-running it replenishes deleted synthetic users and creates more churn, leaving 27,000 synthetic users.
+Use it only in disposable non-production databases. Autovacuum may clean dead tuples before a scrape; repeat the workload
+and allow several 15-second Prometheus scrapes to observe trends in the PostgreSQL vacuum dashboard.
+For manual before/after comparison, run `VACUUM (ANALYZE) public.user_t;` as a separate statement after the workload.
 
 ### Alert thresholds and operator actions
 

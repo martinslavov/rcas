@@ -18,12 +18,28 @@ BEGIN;
 -- Serialize the explicit-ID inserts and sequence repair with ordinary writers.
 LOCK TABLE "user_t", "subscription" IN ACCESS EXCLUSIVE MODE;
 
-INSERT INTO "user_t" (id, username, password, email, created_on)
-VALUES
-    (1000, $p$populator-user-1000$p$, $p$populator-password$p$, $p$populator-user-1000@example.com$p$, now()),
-    (1001, $p$populator-user-1001$p$, $p$populator-password$p$, $p$populator-user-1001@example.com$p$, now()),
-    (1002, $p$populator-user-1002$p$, $p$populator-password$p$, $p$populator-user-1002@example.com$p$, now())
-ON CONFLICT DO NOTHING;
+-- Legacy user tables remain supported after the subscription-only migration.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_partitioned_table WHERE partrelid = 'public.user_t'::regclass) THEN
+        PERFORM public.ensure_user_day_partition(CURRENT_DATE - 2);
+        PERFORM public.ensure_user_day_partition(CURRENT_DATE - 1);
+        PERFORM public.ensure_user_day_partition(CURRENT_DATE);
+    END IF;
+END;
+$$;
+
+INSERT INTO public.user_t (id, username, password, email, created_on)
+SELECT seed.id, seed.username, seed.password, seed.email, seed.created_on
+FROM (VALUES
+    (1000, $p$populator-user-1000$p$, $p$populator-password$p$, $p$populator-user-1000@example.com$p$, (CURRENT_DATE - 2)::TIMESTAMP),
+    (1001, $p$populator-user-1001$p$, $p$populator-password$p$, $p$populator-user-1001@example.com$p$, (CURRENT_DATE - 1)::TIMESTAMP),
+    (1002, $p$populator-user-1002$p$, $p$populator-password$p$, $p$populator-user-1002@example.com$p$, CURRENT_DATE::TIMESTAMP)
+) AS seed(id, username, password, email, created_on)
+WHERE NOT EXISTS (
+    SELECT 1 FROM public.user_t u
+    WHERE u.id = seed.id OR u.username = seed.username OR u.email = seed.email
+);
 
 INSERT INTO "subscription" (id, type, active, user_id)
 SELECT seed.id, seed.type, seed.active, seed.user_id FROM (VALUES
