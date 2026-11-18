@@ -141,6 +141,81 @@ All containers share the `rcas-docker-network` network. The Compose project name
 
 The database scripts run only when the Postgres container is created for the first time. After changing them, recreate the data with `docker compose --profile app down -v`.
 
+### Subscription partitioning and upgrades
+
+New databases use four HASH partitions on `subscription.id`. This retains a database-enforced primary key on the
+globally addressable ID, including support for foreign keys referencing that ID. The `user_id` lookup has an index on
+each child, but cannot prune partitions. Four is an initial operational choice, not a performance guarantee; benchmark
+representative data and plans before changing the modulus (repartitioning requires a planned rewrite).
+
+PostgreSQL cannot enforce global `UNIQUE(type)` directly on an ID-partitioned table. The unpartitioned
+`subscription_type_registry` has a unique type and ID; an AFTER row trigger maintains it and deferred foreign keys in
+both directions enforce a matching pair at commit. Concurrent duplicate types fail with a unique violation. Keep the
+trigger and both foreign keys enabled; do not write directly to children, disable triggers/constraints, detach partitions,
+or modify the registry outside a controlled maintenance operation. `TRUNCATE subscription ... CASCADE` also truncates the
+registry. `user_id` has no foreign key in the original schema; this upgrade does not add one or reject existing orphans.
+
+**Existing databases:** Compose initialization is not a migration runner. Rehearse on a restored backup with the same
+PostgreSQL version, schema, privileges, data volume and available disk space. Take and verify a restorable backup.
+Inventory dependent views, foreign keys, custom indexes/constraints/triggers, grants, ownership, publications, policies,
+and any other objects or clients bound to the old table; adapt and independently review the migration for such deployments.
+The supplied migration rejects several common dependencies rather than silently leaving them on the old table. It expects
+the original `subscription_id_seq` owned by `subscription.id` in the current schema. Audit ID/type duplicates, nulls,
+sequence state and optional user orphans. Stop all application/read/write/sequence clients and scheduled jobs, clear or
+restart caches, and keep the write freeze until validation finishes. Estimate lock/copy time and space for both copies and
+indexes; set an appropriate maintenance window and lock/statement timeouts for the environment.
+
+Apply **once**, as the schema owner, with `ON_ERROR_STOP`, against the original unpartitioned table:
+
+```bash
+docker compose exec -T postgres psql -U test -d testdb -v ON_ERROR_STOP=1 < db.migration/V4__PartitionSubscription.sql
+```
+
+The transactional migration locks the table, checks legacy data and supported dependencies, creates and fills the
+partitioned table and registry, checks the copy, transfers sequence ownership without lowering its high-water mark, and
+retains `subscription_legacy`. On error the DDL and data copy roll back; sequence `setval` is not transactional, but is
+only advanced, never lowered. Verify counts, full row equality, registry equality, constraints, sequence ownership and
+next ID, permissions and representative ID/user queries before resuming. Refresh planner statistics (`ANALYZE
+subscription`) and restart/clear caches. Retain the old table and backup until validation and the agreed rollback window
+end; then drop the old table only after confirming the authoritative new data and backup.
+
+**Rollback:** Before new writes, the retained old rows can be restored by reversing the swap. After any new writes, the
+old table is stale: stop all clients and freeze writes again, back up the authoritative partitioned table, and copy its
+complete current contents into the legacy table under lock before swapping. Validate types/IDs, counts and sequence state;
+never simply rename a stale copy. For the uncustomized schema, perform the following in one transaction while frozen,
+after first validating on a restored copy:
+
+```sql
+BEGIN;
+LOCK TABLE subscription, subscription_legacy IN ACCESS EXCLUSIVE MODE;
+TRUNCATE subscription_legacy;
+INSERT INTO subscription_legacy (id, type, active, user_id)
+    SELECT id, type, active, user_id FROM subscription;
+ALTER SEQUENCE subscription_id_seq OWNED BY subscription_legacy.id;
+ALTER TABLE subscription_legacy ALTER COLUMN id SET DEFAULT nextval('subscription_id_seq');
+SELECT setval('subscription_id_seq', GREATEST((SELECT last_value FROM subscription_id_seq), max(id)), true)
+    FROM subscription_legacy HAVING max(id) IS NOT NULL AND max(id) >= (SELECT last_value FROM subscription_id_seq);
+DROP TABLE subscription CASCADE;
+DROP TABLE subscription_type_registry;
+DROP FUNCTION sync_subscription_type_registry();
+ALTER TABLE subscription_legacy RENAME TO subscription;
+COMMIT;
+```
+
+Check row equality before the DROP, and check constraints, generated IDs and permissions before releasing the freeze;
+rollback of a customized deployment requires a separately rehearsed dependency/privilege plan. If the retained table is
+gone, restore from backup and reconcile all writes since the backup instead.
+
+**Operations and future user partitioning:** Monitor per-child size, index bloat, autovacuum and analyze activity, as well
+as parent statistics and query plans; each child needs vacuum/analyze and index maintenance. HASH does not provide
+time-based detach/drop retention, and more partitions increase catalog/planning overhead. Monitor the registry as a
+central write/uniqueness bottleneck. For a future `user_t` rollout, investigate HASH on immutable `id` to retain ID-only
+primary keys and references, but global unique `username` and `email` need independently enforced registries (or an
+approved contract change). Inventory references, external dependencies, cache and query patterns, orphan subscriptions,
+operational load and PostgreSQL limits first; rehearse a locked copy/swap with backup, validation and post-write rollback
+as above. Adding user foreign keys, partition rebalancing, retention policy and automated migrations are follow-up work,
+not part of this upgrade.
+
 ## Monitoring (profile `monitoring`)
 
 An optional monitoring stack is available in the `monitoring` Compose profile. It is not started by `docker compose up`, `make up` or CI.
