@@ -18,6 +18,8 @@ DROP SCHEMA IF EXISTS citus_poc CASCADE;
 CREATE SCHEMA citus_poc;
 CREATE SEQUENCE citus_poc.user_t_id_seq;
 CREATE SEQUENCE citus_poc.subscription_id_seq;
+CREATE SEQUENCE citus_poc.legacy_user_t_id_seq;
+CREATE SEQUENCE citus_poc.legacy_subscription_id_seq;
 
 CREATE TABLE citus_poc.user_identity (
     id INTEGER PRIMARY KEY,
@@ -47,6 +49,30 @@ CREATE TABLE citus_poc.user_t (
         FOREIGN KEY (id, username, email, created_on)
         REFERENCES citus_poc.user_identity (id, username, email, created_on)
 ) PARTITION BY RANGE (created_on);
+ALTER TABLE citus_poc.user_t
+    ALTER COLUMN id SET DEFAULT nextval('citus_poc.legacy_user_t_id_seq'::REGCLASS);
+DO $$
+DECLARE
+    id_default TEXT;
+BEGIN
+    SELECT pg_get_expr(d.adbin, d.adrelid)
+    INTO id_default
+    FROM pg_attribute a
+    JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+    WHERE a.attrelid = 'citus_poc.user_t'::REGCLASS
+      AND a.attname = 'id';
+
+    IF id_default NOT LIKE '%user_t_id_seq%' THEN
+        RAISE EXCEPTION 'The wrong user sequence does not reproduce the substring-match case';
+    END IF;
+
+    IF rcas.id_default_uses_sequence('citus_poc.user_t', 'citus_poc.user_t_id_seq') THEN
+        RAISE EXCEPTION 'The user ID default accepted a differently named sequence';
+    END IF;
+END
+$$;
+ALTER TABLE citus_poc.user_t
+    ALTER COLUMN id SET DEFAULT nextval('citus_poc.user_t_id_seq'::REGCLASS);
 ALTER SEQUENCE citus_poc.user_t_id_seq OWNED BY citus_poc.user_t.id;
 
 CREATE TABLE citus_poc.user_t_default
@@ -89,6 +115,30 @@ CREATE TABLE citus_poc.subscription (
         FOREIGN KEY (type, id)
         REFERENCES citus_poc.subscription_type_registry (type, subscription_id)
 ) PARTITION BY HASH (id);
+ALTER TABLE citus_poc.subscription
+    ALTER COLUMN id SET DEFAULT nextval('citus_poc.legacy_subscription_id_seq'::REGCLASS);
+DO $$
+DECLARE
+    id_default TEXT;
+BEGIN
+    SELECT pg_get_expr(d.adbin, d.adrelid)
+    INTO id_default
+    FROM pg_attribute a
+    JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+    WHERE a.attrelid = 'citus_poc.subscription'::REGCLASS
+      AND a.attname = 'id';
+
+    IF id_default NOT LIKE '%subscription_id_seq%' THEN
+        RAISE EXCEPTION 'The wrong subscription sequence does not reproduce the substring-match case';
+    END IF;
+
+    IF rcas.id_default_uses_sequence('citus_poc.subscription', 'citus_poc.subscription_id_seq') THEN
+        RAISE EXCEPTION 'The subscription ID default accepted a differently named sequence';
+    END IF;
+END
+$$;
+ALTER TABLE citus_poc.subscription
+    ALTER COLUMN id SET DEFAULT nextval('citus_poc.subscription_id_seq'::REGCLASS);
 ALTER SEQUENCE citus_poc.subscription_id_seq OWNED BY citus_poc.subscription.id;
 
 CREATE TABLE citus_poc.subscription_p0 PARTITION OF citus_poc.subscription

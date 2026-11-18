@@ -26,6 +26,31 @@ ALTER ROLE test SET search_path TO rcas, public;
 CREATE SEQUENCE IF NOT EXISTS rcas.user_t_id_seq;
 CREATE SEQUENCE IF NOT EXISTS rcas.subscription_id_seq;
 
+CREATE OR REPLACE FUNCTION rcas.id_default_uses_sequence(
+    target_table REGCLASS,
+    expected_sequence REGCLASS
+)
+RETURNS BOOLEAN
+LANGUAGE SQL
+STABLE
+AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM pg_attribute a
+        JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+        WHERE a.attrelid = target_table
+          AND a.attname = 'id'
+          AND EXISTS (
+              SELECT 1
+              FROM pg_depend seq_dep
+              WHERE seq_dep.classid = 'pg_attrdef'::REGCLASS
+                AND seq_dep.objid = d.oid
+                AND seq_dep.refclassid = 'pg_class'::REGCLASS
+                AND seq_dep.refobjid = expected_sequence
+          )
+    )
+$$;
+
 CREATE TABLE IF NOT EXISTS rcas.user_identity (
     id INTEGER PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
@@ -66,14 +91,7 @@ CREATE TABLE IF NOT EXISTS rcas.user_t (
 ) PARTITION BY RANGE (created_on);
 DO $$
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_attribute a
-        JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-        WHERE a.attrelid = 'rcas.user_t'::REGCLASS
-          AND a.attname = 'id'
-          AND pg_get_expr(d.adbin, d.adrelid) LIKE '%user_t_id_seq%'
-    ) THEN
+    IF NOT rcas.id_default_uses_sequence('rcas.user_t', 'rcas.user_t_id_seq') THEN
         RAISE EXCEPTION 'rcas.user_t.id must default to rcas.user_t_id_seq; recreate the local Citus volumes to apply this schema change';
     END IF;
 END
@@ -139,14 +157,7 @@ CREATE TABLE IF NOT EXISTS rcas.subscription (
 ) PARTITION BY HASH (id);
 DO $$
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_attribute a
-        JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-        WHERE a.attrelid = 'rcas.subscription'::REGCLASS
-          AND a.attname = 'id'
-          AND pg_get_expr(d.adbin, d.adrelid) LIKE '%subscription_id_seq%'
-    ) THEN
+    IF NOT rcas.id_default_uses_sequence('rcas.subscription', 'rcas.subscription_id_seq') THEN
         RAISE EXCEPTION 'rcas.subscription.id must default to rcas.subscription_id_seq; recreate the local Citus volumes to apply this schema change';
     END IF;
 END
