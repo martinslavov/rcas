@@ -1,0 +1,87 @@
+dead_tuples_by_table:
+  query: |
+    SELECT
+      schemaname::text AS schema,
+      relname::text AS table,
+      COALESCE(n_dead_tup, 0)::double precision AS dead_tuples,
+      CASE
+        WHEN (COALESCE(n_live_tup, 0) + COALESCE(n_dead_tup, 0)) = 0 THEN 0
+        ELSE ROUND((COALESCE(n_dead_tup, 0)::numeric * 100.0) / (COALESCE(n_live_tup, 0) + COALESCE(n_dead_tup, 0)), 2)::double precision
+      END AS dead_tuple_ratio_percent
+    FROM pg_stat_user_tables;
+  metrics:
+    - schema:
+        usage: "LABEL"
+        description: "Schema name"
+    - table:
+        usage: "LABEL"
+        description: "Table name"
+    - dead_tuples:
+        usage: "GAUGE"
+        description: "Estimated dead tuples per table"
+        metric_name: rcas_pg_dead_tuples
+    - dead_tuple_ratio_percent:
+        usage: "GAUGE"
+        description: "Dead tuple ratio percent per table"
+        metric_name: rcas_pg_dead_tuple_ratio_percent
+
+seconds_since_last_autovacuum:
+  query: |
+    SELECT
+      schemaname::text AS schema,
+      relname::text AS table,
+      CASE
+        WHEN last_autovacuum IS NULL THEN 999999
+        ELSE EXTRACT(EPOCH FROM (clock_timestamp() - last_autovacuum))::double precision
+      END AS seconds_since_autovacuum
+    FROM pg_stat_user_tables;
+  metrics:
+    - schema:
+        usage: "LABEL"
+        description: "Schema name"
+    - table:
+        usage: "LABEL"
+        description: "Table name"
+    - seconds_since_autovacuum:
+        usage: "GAUGE"
+        description: "Seconds elapsed since the last autovacuum on a table"
+        metric_name: rcas_pg_seconds_since_autovacuum
+
+vacuum_progress_runtime:
+  query: |
+    SELECT
+      a.datname::text AS database,
+      c.relname::text AS table,
+      p.phase::text AS phase,
+      EXTRACT(EPOCH FROM (clock_timestamp() - a.query_start))::double precision AS vacuum_in_progress_seconds
+    FROM pg_stat_progress_vacuum p
+    JOIN pg_stat_activity a ON a.pid = p.pid
+    JOIN pg_class c ON c.oid = p.relid;
+  metrics:
+    - database:
+        usage: "LABEL"
+        description: "Database name"
+    - table:
+        usage: "LABEL"
+        description: "Table name"
+    - phase:
+        usage: "LABEL"
+        description: "Vacuum phase"
+    - vacuum_in_progress_seconds:
+        usage: "GAUGE"
+        description: "Elapsed seconds for an in-progress vacuum operation"
+        metric_name: rcas_pg_vacuum_in_progress_seconds
+
+long_running_transaction:
+  query: |
+    SELECT
+      COALESCE(MAX(EXTRACT(EPOCH FROM (clock_timestamp() - xact_start))), 0)::double precision AS longest_tx_seconds
+    FROM pg_stat_activity
+    WHERE xact_start IS NOT NULL
+      AND state <> 'idle';
+  metrics:
+    - longest_tx_seconds:
+        usage: "GAUGE"
+        description: "Oldest open transaction age in seconds"
+        metric_name: rcas_pg_longest_tx_seconds
+

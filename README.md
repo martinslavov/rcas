@@ -149,8 +149,9 @@ An optional monitoring stack is available in the `monitoring` Compose profile. I
 |---------|-------|------|-------|
 | `otel-collector` | `otel/opentelemetry-collector:0.116.1` | 4317 (gRPC), 4318 (HTTP) | receives OTLP; logs go to Loki, traces to the collector log (`debug` exporter) |
 | `prometheus` | `prom/prometheus:v3.0.1` | 9090 | scrapes `rcas:8080/app/actuator/prometheus` and the collector |
+| `postgres-exporter` | `prometheuscommunity/postgres-exporter:v0.15.0` | 9187 | exposes PostgreSQL vacuum, dead tuple, bloat ratio and long-transaction metrics via custom queries |
 | `loki` | `grafana/loki:3.3.2` | 3100 | log storage (OTLP ingestion on `/otlp`) |
-| `grafana` | `grafana/grafana:11.4.0` | 3000 | provisioned Prometheus and Loki datasources and the RCAS Cache & Database Load dashboard; anonymous admin access (local use only) |
+| `grafana` | `grafana/grafana:11.4.0` | 3000 | provisioned Prometheus and Loki datasources and dashboards (cache/database load plus PostgreSQL vacuum); anonymous admin access (local use only) |
 
 ```bash
 make monitoring-up      # RCAS + dependencies + monitoring, OTLP export enabled in RCAS
@@ -185,7 +186,7 @@ Alternatively, `make monitoring-down` removes the development stack and its volu
 
 `make monitoring-up` passes `docker/monitoring/monitoring.env`, which switches RCAS to `log4j2-otel.yaml` (console plus the OpenTelemetry log appender) and enables OTLP trace and log export to the collector (traces are sampled at 100%). Without that file the OTLP export is off, so tests and the default stack need no collector. Configuration lives in `docker/monitoring/`.
 
-Open the provisioned dashboard at <http://localhost:3000/d/rcas-cache-db-load/rcas-cache-database-load> (UID `rcas-cache-db-load`, default range 1 hour, refresh 15 seconds). Grafana Explore is also available with datasource `Loki`, query `{service_name="rcas"}`, or `Prometheus`; Prometheus targets are at <http://localhost:9090/targets>. Dashboard JSON and provisioning are versioned under `docker/monitoring/grafana/provisioning/`, so Grafana re-creates the dashboard when its container is replaced.
+Open the provisioned dashboards at <http://localhost:3000/d/rcas-cache-db-load/rcas-cache-database-load> (UID `rcas-cache-db-load`) and <http://localhost:3000/d/rcas-postgres-vacuum/rcas-postgresql-vacuum-monitoring> (UID `rcas-postgres-vacuum`). Grafana Explore is also available with datasource `Loki`, query `{service_name="rcas"}`, or `Prometheus`; Prometheus targets are at <http://localhost:9090/targets>. Dashboard JSON and provisioning are versioned under `docker/monitoring/grafana/provisioning/`, so Grafana re-creates dashboards when its container is replaced. Prometheus also loads `docker/monitoring/prometheus-alerts.yml`, which defines vacuum/bloat alerts with operator actions.
 
 ### Cache and database metric semantics
 
@@ -226,6 +227,82 @@ CONCURRENCY_LEVELS='1 8' REQUESTS_PER_WORKER=100 USER_IDS=1000,1001,1002 ./scrip
 ```
 
 The first worker at concurrency 1 reads Redis and promotes results to Caffeine; remaining requests exercise the warm tier. Prometheus scrapes every 15 seconds, so allow a scrape interval before inspecting the graphs. The helper accepts `BASE_URL`, `USER_IDS`, `CONCURRENCY_LEVELS`, `REQUESTS_PER_WORKER` and `REQUEST_DELAY` overrides; it does not write or seed application data.
+
+## Database vacuum maintenance
+
+RCAS uses PostgreSQL autovacuum as the primary cleanup strategy. The stack includes:
+
+- global defaults in the `postgres` service command (`docker-compose.yml`)
+- table-level overrides for high-churn tables in `db.migration/V4__AutovacuumTuning.sql`
+- Prometheus alerting rules in `docker/monitoring/prometheus-alerts.yml`
+- PostgreSQL metrics exported via `docker/monitoring/postgres-exporter-queries.yml`
+
+### Active vacuum strategy
+
+- Keep routine cleanup automatic (`autovacuum_enabled=true`).
+- Lower per-table scale factors for `user_t` and `subscription` so cleanup starts earlier than the global threshold.
+- Monitor dead tuples and time since last autovacuum, then intervene with manual `VACUUM (ANALYZE)` only when alerts or trend data justify it.
+
+### Configured parameters
+
+Global PostgreSQL runtime settings:
+
+| Parameter | Value |
+|-----------|-------|
+| `autovacuum_naptime` | `30s` |
+| `autovacuum_vacuum_scale_factor` | `0.05` |
+| `autovacuum_analyze_scale_factor` | `0.02` |
+| `autovacuum_vacuum_cost_limit` | `400` |
+| `autovacuum_vacuum_cost_delay` | `5ms` |
+| `log_autovacuum_min_duration` | `250ms` |
+
+Table-level overrides (from `V4__AutovacuumTuning.sql`):
+
+| Table | Key settings |
+|-------|--------------|
+| `user_t` | `autovacuum_vacuum_threshold=50`, `autovacuum_vacuum_scale_factor=0.02`, `autovacuum_analyze_scale_factor=0.01`, `autovacuum_vacuum_cost_limit=800` |
+| `subscription` | `autovacuum_vacuum_threshold=100`, `autovacuum_vacuum_scale_factor=0.02`, `autovacuum_analyze_scale_factor=0.01`, `autovacuum_vacuum_cost_limit=1200` |
+
+### Manual `VACUUM (ANALYZE)` guidance
+
+Run manual `VACUUM (ANALYZE)` for specific tables when one of these persists after normal load settles:
+
+- dead tuple ratio remains high (`>20%`) with increasing dead tuple count
+- autovacuum is stalled or delayed for long periods
+- bloat trend worsens while query latency regresses
+
+Example command:
+
+```bash
+docker compose exec -T postgres psql -U test -d testdb -v ON_ERROR_STOP=1 -c 'VACUUM (ANALYZE) public."subscription";'
+```
+
+Avoid `VACUUM FULL` in normal operations. It rewrites the whole table, requires stronger locking, and can block application traffic. Reserve it for controlled maintenance windows with rollback and recovery planning.
+
+### Alert thresholds and operator actions
+
+The default monitoring profile ships these alerts:
+
+- `PostgresTableBloatGrowth`: dead tuple ratio `>20%` and dead tuples `>1000` for 15 minutes
+- `PostgresAutovacuumStalled`: no autovacuum activity for over 2 hours (30-minute hold)
+- `PostgresLongRunningTransaction`: longest open transaction `>900s` for 10 minutes
+- `PostgresVacuumExecutionTooLong`: in-progress vacuum runtime over 30 minutes
+
+Each rule includes operator actions in annotations (investigate blockers, coordinate session cancellation, and run targeted `VACUUM (ANALYZE)` when needed).
+
+### Validation snapshots (non-production)
+
+Capture before/after evidence from a local or staging stack with:
+
+```bash
+make monitoring-up
+make vacuum-snapshot OUT=build/reports/vacuum-before.txt
+# optional churn + manual maintenance step
+docker compose exec -T postgres psql -U test -d testdb -v ON_ERROR_STOP=1 -c 'VACUUM (ANALYZE) public."subscription";'
+make vacuum-snapshot OUT=build/reports/vacuum-after.txt
+```
+
+Issue #263 validation evidence and exact commands are tracked in `docs/db-vacuum-validation.md`.
 
 ## Configuring the JVM
 
