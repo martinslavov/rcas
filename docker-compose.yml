@@ -43,19 +43,26 @@ services:
       retries: 20
 
   # ------------------------------
-  # PostgreSQL browser UI (profile: db-ui)
-  # Started with: docker compose --profile db-ui up -d
+  # Local-only pgAdmin desktop mode (profile: db-ui)
+  # Set PGADMIN_PASSWORD to a random bootstrap value before starting.
   # ------------------------------
-  adminer:
+  pgadmin:
     profiles: ["db-ui"]
-    image: adminer:5.3.0
-    container_name: rcas-adminer
+    image: dpage/pgadmin4:9.19
+    container_name: rcas-pgadmin
     networks:
       - rcas-docker-network
     ports:
-      - "127.0.0.1:8081:8080"
+      - "127.0.0.1:8081:80"
     environment:
-      ADMINER_DEFAULT_SERVER: postgres
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: "${PGADMIN_PASSWORD:-}"
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      PGADMIN_DISABLE_POSTFIX: "true"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -192,6 +199,9 @@ services:
       - prometheus
       - loki
       - postgres-exporter
+
+volumes:
+  pgadmin-data:
 
 networks:
   rcas-docker-network:

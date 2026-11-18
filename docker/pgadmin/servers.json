@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "RCAS PostgreSQL",
+      "Group": "Local development",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "testdb",
+      "Username": "test",
+      "SSLMode": "prefer"
+    }
+  }
+}

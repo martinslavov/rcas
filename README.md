@@ -74,12 +74,14 @@ The tests use Testcontainers, so Docker must be running.
 | Command | What starts |
 |---------|-------------|
 | `docker compose up -d` | Only the infrastructure: PostgreSQL and Redis |
-| `docker compose --profile db-ui up -d` | Infrastructure and Adminer, the PostgreSQL web UI |
+| `PGADMIN_PASSWORD="$(openssl rand -hex 24)" docker compose --profile db-ui up -d` | Infrastructure and pgAdmin 4, the PostgreSQL web UI |
 | `docker compose --profile app up -d` | Infrastructure and the `rcas` application |
 
 `rcas` belongs to the `app` profile, so it is **not** started by default. This lets you run the dependencies in Docker and start the service yourself from the IDE.
 
-To browse or execute SQL against the local PostgreSQL database, start the `db-ui` profile and open <http://localhost:8081>. In Adminer, select **PostgreSQL** and use server `postgres`, database `testdb`, username `test`, and password `test`. The UI port is bound to localhost only.
+To browse or execute SQL against the local PostgreSQL database, start the `db-ui` profile with the command above and open <http://localhost:8081>. pgAdmin runs in local desktop mode without a web login; never expose this profile outside a trusted local machine. The random `PGADMIN_PASSWORD` is only a bootstrap requirement, not a password you need to remember. The UI port is bound to localhost only.
+
+Expand **Servers → RCAS PostgreSQL**, enter the database password `test`, then open **Databases → testdb → Schemas → public → Tables**. The server connection is provisioned automatically; its host is `postgres`, port `5432`, username `test`, and database `testdb`. Right-click the database and select **Query Tool** to execute SQL. pgAdmin settings persist in the `pgadmin-data` volume; `docker compose --profile db-ui down -v` removes that volume along with other stack volumes.
 
 Stop everything (the `--profile app` flag is needed to also stop the service):
 
@@ -137,7 +139,7 @@ Then visit <http://localhost:8080/app/actuator/health>. `docker pull ghcr.io/mar
 | Service | Image | Port | Notes |
 |---------|-------|------|-------|
 | `postgres` | `postgres:15.2` | 5432 | `db.migration/init.sql`, `V2__InsertUser.sql` and `V3__InsertSubscription.sql` run on first start |
-| `adminer` | `adminer:5.3.0` | 8081 | profile `db-ui`; local PostgreSQL browser and SQL editor |
+| `pgadmin` | `dpage/pgadmin4:9.19` | 8081 | profile `db-ui`; localhost-only pgAdmin 4 with a provisioned RCAS connection |
 | `redis` | `redis:7` | 6379 | |
 | `rcas` | built from `Dockerfile` | 8080 | profile `app` |
 
