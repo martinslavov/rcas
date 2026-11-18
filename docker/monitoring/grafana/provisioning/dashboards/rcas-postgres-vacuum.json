@@ -69,7 +69,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(10, rcas_pg_dead_tuples{job=\"$job\"})",
+          "expr": "topk(10, dead_tuples_by_table_dead_tuples{job=\"$job\"})",
           "legendFormat": "{{schema}}.{{table}}",
           "range": true,
           "refId": "A"
@@ -114,7 +114,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(10, rcas_pg_dead_tuple_ratio_percent{job=\"$job\"} / 100)",
+          "expr": "topk(10, dead_tuples_by_table_dead_tuple_ratio_percent{job=\"$job\"} / 100)",
           "legendFormat": "{{schema}}.{{table}}",
           "range": true,
           "refId": "A"
@@ -176,7 +176,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "topk(10, rcas_pg_seconds_since_autovacuum{job=\"$job\"})",
+          "expr": "topk(10, seconds_since_last_autovacuum_seconds_since_autovacuum{job=\"$job\"})",
           "legendFormat": "{{schema}}.{{table}}",
           "range": true,
           "refId": "A"
@@ -240,14 +240,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rcas_pg_longest_tx_seconds{job=\"$job\"}",
+          "expr": "long_running_transaction_longest_tx_seconds{job=\"$job\"}",
           "legendFormat": "longest transaction",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "max by (table, phase) (rcas_pg_vacuum_in_progress_seconds{job=\"$job\"})",
+          "expr": "max by (table, phase) (vacuum_progress_runtime_vacuum_in_progress_seconds{job=\"$job\"})",
           "legendFormat": "vacuum {{table}} ({{phase}})",
           "range": true,
           "refId": "B"
@@ -305,14 +305,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rcas_pg_dead_tuples{job=\"$job\",schema=\"public\",table=\"subscription\"}",
+          "expr": "dead_tuples_by_table_dead_tuples{job=\"$job\",schema=\"public\",table=\"subscription\"}",
           "legendFormat": "dead tuples",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "rcas_pg_dead_tuple_ratio_percent{job=\"$job\",schema=\"public\",table=\"subscription\"} / 100",
+          "expr": "dead_tuples_by_table_dead_tuple_ratio_percent{job=\"$job\",schema=\"public\",table=\"subscription\"} / 100",
           "legendFormat": "dead tuple ratio",
           "range": true,
           "refId": "B"
@@ -370,14 +370,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rcas_pg_dead_tuples{job=\"$job\",schema=\"public\",table=\"user_t\"}",
+          "expr": "dead_tuples_by_table_dead_tuples{job=\"$job\",schema=\"public\",table=\"user_t\"}",
           "legendFormat": "dead tuples",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "rcas_pg_dead_tuple_ratio_percent{job=\"$job\",schema=\"public\",table=\"user_t\"} / 100",
+          "expr": "dead_tuples_by_table_dead_tuple_ratio_percent{job=\"$job\",schema=\"public\",table=\"user_t\"} / 100",
           "legendFormat": "dead tuple ratio",
           "range": true,
           "refId": "B"
