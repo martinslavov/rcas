@@ -24,7 +24,9 @@ SELECT
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public'
-  AND c.relname IN ('user_t', 'subscription')
+  AND (c.relname IN ('user_t', 'subscription')
+       OR c.oid IN (SELECT inhrelid FROM pg_inherits
+                    WHERE inhparent IN ('public.user_t'::regclass, 'public.subscription'::regclass)))
 ORDER BY c.relname;
 
 \echo [dead_tuples]
@@ -37,7 +39,9 @@ SELECT
   last_autovacuum,
   last_autoanalyze
 FROM pg_stat_user_tables
-WHERE relname IN ('user_t', 'subscription')
+WHERE relid IN ('public.user_t'::regclass, 'public.subscription'::regclass)
+   OR relid IN (SELECT inhrelid FROM pg_inherits
+                WHERE inhparent IN ('public.user_t'::regclass, 'public.subscription'::regclass))
 ORDER BY relname;
 
 \echo [long_running_transactions]
@@ -67,5 +71,4 @@ if [[ -n "$OUT_FILE" ]]; then
 else
   printf '%s\n' "$SQL_PAYLOAD" | bash -lc "$CMD"
 fi
-
 

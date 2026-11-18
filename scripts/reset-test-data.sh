@@ -15,7 +15,7 @@ fi
 # Reset persistent stores first, then restart RCAS so its in-memory cache starts clean too.
 bash -lc "$COMPOSE_CMD exec -T postgres psql -U test -d testdb -v ON_ERROR_STOP=1 <<'SQL'
 BEGIN;
-TRUNCATE TABLE \"subscription\", \"user_t\" RESTART IDENTITY CASCADE;
+TRUNCATE TABLE \"subscription\", \"user_t\", user_identity RESTART IDENTITY CASCADE;
 
 INSERT INTO \"user_t\" (id, username, password, email, created_on, last_login)
 VALUES
@@ -42,5 +42,4 @@ bash -lc "$COMPOSE_CMD --profile app restart rcas"
 COMPOSE="$COMPOSE_CMD" "$SCRIPT_DIR/wait-for-stack-ready.sh"
 
 echo "Deterministic test data reset completed"
-
 

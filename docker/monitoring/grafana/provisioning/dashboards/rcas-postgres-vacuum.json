@@ -271,8 +271,8 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "dead tuple ratio"
+              "id": "byRegexp",
+              "options": ".* dead tuple ratio"
             },
             "properties": [
               {
@@ -305,15 +305,15 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "dead_tuples_by_table_dead_tuples{job=\"$job\",schema=\"public\",table=\"subscription\"}",
-          "legendFormat": "dead tuples",
+          "expr": "dead_tuples_by_table_dead_tuples{job=\"$job\",schema=\"public\",table=~\"subscription(_p[0-3])?\"}",
+          "legendFormat": "{{table}} dead tuples",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "dead_tuples_by_table_dead_tuple_ratio_percent{job=\"$job\",schema=\"public\",table=\"subscription\"} / 100",
-          "legendFormat": "dead tuple ratio",
+          "expr": "dead_tuples_by_table_dead_tuple_ratio_percent{job=\"$job\",schema=\"public\",table=~\"subscription(_p[0-3])?\"} / 100",
+          "legendFormat": "{{table}} dead tuple ratio",
           "range": true,
           "refId": "B"
         }
@@ -336,8 +336,8 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "dead tuple ratio"
+              "id": "byRegexp",
+              "options": ".* dead tuple ratio"
             },
             "properties": [
               {
@@ -370,15 +370,15 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "dead_tuples_by_table_dead_tuples{job=\"$job\",schema=\"public\",table=\"user_t\"}",
-          "legendFormat": "dead tuples",
+          "expr": "dead_tuples_by_table_dead_tuples{job=\"$job\",schema=\"public\",table=~\"user_t(_[0-9]{8}|_default)?\"}",
+          "legendFormat": "{{table}} dead tuples",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "dead_tuples_by_table_dead_tuple_ratio_percent{job=\"$job\",schema=\"public\",table=\"user_t\"} / 100",
-          "legendFormat": "dead tuple ratio",
+          "expr": "dead_tuples_by_table_dead_tuple_ratio_percent{job=\"$job\",schema=\"public\",table=~\"user_t(_[0-9]{8}|_default)?\"} / 100",
+          "legendFormat": "{{table}} dead tuple ratio",
           "range": true,
           "refId": "B"
         }
@@ -506,4 +506,3 @@
   "version": 3,
   "weekStart": ""
 }
-
