@@ -503,7 +503,7 @@
   "timezone": "",
   "title": "RCAS PostgreSQL Vacuum Monitoring",
   "uid": "rcas-postgres-vacuum",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }
 
