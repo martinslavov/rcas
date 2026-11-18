@@ -1,13 +1,13 @@
 COMPOSE ?= docker compose
 HEALTH_TIMEOUT ?= 180
 
-.PHONY: build up down logs verify-stack-ready reset-test-data component-tests sanity-tests monitoring-up monitoring-down startup-service-records-populator performance-vacuum-database vacuum-snapshot
+.PHONY: build up down logs verify-stack-ready reset-test-data component-tests sanity-tests monitoring-up monitoring-down startup-service-records-populator performance-vacuum-database vacuum-snapshot citus-up citus-daily-partition-test citus-down
 
 ## Build the artifacts used by the Docker image: the executable jar and the health check class (build/healthcheck)
 build:
 	./gradlew bootJar healthCheckClass -x test
 
-## Start (requires `make build` first): build the image and start PostgreSQL, Redis and RCAS; waits until all containers are healthy
+## Start (requires `make build` first): start the Citus cluster, Redis and RCAS; wait until all containers are healthy
 up:
 	$(COMPOSE) --profile app up -d --build --wait --wait-timeout $(HEALTH_TIMEOUT)
 
@@ -19,7 +19,7 @@ down:
 logs:
 	$(COMPOSE) --profile app logs --no-color
 
-## Wait until PostgreSQL, Redis and RCAS health endpoint are ready
+## Wait until Citus/PostgreSQL, Redis and RCAS health endpoint are ready
 verify-stack-ready:
 	COMPOSE="$(COMPOSE)" ./scripts/wait-for-stack-ready.sh
 
@@ -49,8 +49,20 @@ startup-service-records-populator:
 
 ## Add synthetic write churn for local PostgreSQL vacuum/partition analysis
 performance-vacuum-database:
-	$(COMPOSE) exec -T postgres psql -U test -d testdb -v ON_ERROR_STOP=1 < db.migration/performance_vacuum_database.sql
+	$(COMPOSE) exec -T postgres-coordinator psql -U test -d testdb -v ON_ERROR_STOP=1 < db.migration/performance_vacuum_database.sql
 
 ## Capture a PostgreSQL vacuum/autovacuum snapshot from the running stack (optional OUT=path)
 vacuum-snapshot:
 	COMPOSE="$(COMPOSE)" ./scripts/vacuum-monitoring-snapshot.sh "$(OUT)"
+
+## Build RCAS and start the Citus + Redis + monitoring stack in the main Compose project
+citus-up: build
+	$(COMPOSE) --profile app --profile monitoring up -d --build --wait --wait-timeout $(HEALTH_TIMEOUT)
+
+## Run the Citus daily-user-partition proof of concept
+citus-daily-partition-test:
+	$(COMPOSE) --profile test run --rm citus-test
+
+## Stop the Citus stack and remove its local data
+citus-down:
+	$(COMPOSE) --profile app --profile monitoring down -v

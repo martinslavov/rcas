@@ -1,11 +1,12 @@
 name: rcas
 services:
   # ------------------------------
-  # PostgreSQL
+  # Citus coordinator (PostgreSQL-compatible endpoint for the application)
   # ------------------------------
-  postgres:
-    image: postgres:15.2
-    container_name: rcas-postgres
+  postgres-coordinator:
+    image: citusdata/citus:13.2.0-pg15
+    platform: linux/amd64
+    container_name: postgres-coordinator
     command:
       - postgres
       - -c
@@ -22,25 +23,151 @@ services:
       - log_autovacuum_min_duration=250ms
       - -c
       - track_io_timing=on
-    networks:
-      - rcas-docker-network
-    ports:
-      - "5432:5432"
     environment:
       POSTGRES_DB: testdb
       POSTGRES_USER: test
       POSTGRES_PASSWORD: test
+      # For this local-only Compose cluster, workers authenticate over the private bridge network.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    networks:
+      rcas-docker-network:
+        aliases:
+          - postgres
+          - citus-coordinator
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
-      # Executed in alphabetical order on first start: schema, then seed data
-      - ./db.migration/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
-      - ./db.migration/V2__InsertUser.sql:/docker-entrypoint-initdb.d/02-insert-user.sql:ro
-      - ./db.migration/V3__InsertSubscription.sql:/docker-entrypoint-initdb.d/03-insert-subscription.sql:ro
-      - ./db.migration/V4__AutovacuumTuning.sql:/docker-entrypoint-initdb.d/04-autovacuum-tuning.sql:ro
+      - citus-coordinator-data:/var/lib/postgresql/data
+    depends_on:
+      postgresql-node1:
+        condition: service_healthy
+      postgresql-node2:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U test -d testdb"]
       interval: 5s
       timeout: 5s
       retries: 20
+
+  postgresql-node1:
+    image: citusdata/citus:13.2.0-pg15
+    platform: linux/amd64
+    container_name: postgresql-node1
+    command:
+      - postgres
+      - -c
+      - autovacuum_naptime=30s
+      - -c
+      - autovacuum_vacuum_scale_factor=0.05
+      - -c
+      - autovacuum_analyze_scale_factor=0.02
+      - -c
+      - autovacuum_vacuum_cost_limit=400
+      - -c
+      - autovacuum_vacuum_cost_delay=5ms
+      - -c
+      - log_autovacuum_min_duration=250ms
+      - -c
+      - track_io_timing=on
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_HOST_AUTH_METHOD: trust
+    networks:
+      rcas-docker-network:
+        aliases:
+          - citus-worker-1
+    volumes:
+      - citus-worker-1-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d testdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  postgresql-node2:
+    image: citusdata/citus:13.2.0-pg15
+    platform: linux/amd64
+    container_name: postgresql-node2
+    command:
+      - postgres
+      - -c
+      - autovacuum_naptime=30s
+      - -c
+      - autovacuum_vacuum_scale_factor=0.05
+      - -c
+      - autovacuum_analyze_scale_factor=0.02
+      - -c
+      - autovacuum_vacuum_cost_limit=400
+      - -c
+      - autovacuum_vacuum_cost_delay=5ms
+      - -c
+      - log_autovacuum_min_duration=250ms
+      - -c
+      - track_io_timing=on
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_HOST_AUTH_METHOD: trust
+    networks:
+      rcas-docker-network:
+        aliases:
+          - citus-worker-2
+    volumes:
+      - citus-worker-2-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d testdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  citus-init:
+    image: citusdata/citus:13.2.0-pg15
+    platform: linux/amd64
+    container_name: rcas-citus-init
+    environment:
+      PGHOST: postgres-coordinator
+      PGUSER: test
+      PGPASSWORD: test
+      PGDATABASE: testdb
+    depends_on:
+      postgres-coordinator:
+        condition: service_healthy
+      postgresql-node1:
+        condition: service_healthy
+      postgresql-node2:
+        condition: service_healthy
+    networks:
+      - rcas-docker-network
+    volumes:
+      - ./docker/citus/init-rcas-citus.sql:/init/init-rcas-citus.sql:ro
+    command:
+      - bash
+      - -ec
+      - psql -v ON_ERROR_STOP=1 -f /init/init-rcas-citus.sql
+
+  citus-test:
+    image: citusdata/citus:13.2.0-pg15
+    platform: linux/amd64
+    profiles: ["test"]
+    environment:
+      PGHOST: postgres-coordinator
+      PGUSER: test
+      PGPASSWORD: test
+      PGDATABASE: testdb
+    depends_on:
+      citus-init:
+        condition: service_completed_successfully
+    networks:
+      - rcas-docker-network
+    volumes:
+      - ./docker/citus/test-daily-user-partition.sql:/tests/test-daily-user-partition.sql:ro
+    command:
+      - bash
+      - -ec
+      - psql -v ON_ERROR_STOP=1 -f /tests/test-daily-user-partition.sql
 
   # ------------------------------
   # Local-only pgAdmin desktop mode (profile: db-ui)
@@ -64,8 +191,8 @@ services:
       - pgadmin-data:/var/lib/pgadmin
       - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
     depends_on:
-      postgres:
-        condition: service_healthy
+      citus-init:
+        condition: service_completed_successfully
 
   # ------------------------------
   # Redis
@@ -100,7 +227,7 @@ services:
     environment:
       JDK_JAVA_OPTIONS: "-XX:MaxRAMPercentage=75"
       SPRING_PROFILES_ACTIVE: "dev"
-      SPRING_R2DBC_URL: "r2dbc:postgresql://postgres:5432/testdb"
+      SPRING_R2DBC_URL: "r2dbc:postgresql://postgres-coordinator:5432/testdb"
       SPRING_R2DBC_USERNAME: "test"
       SPRING_R2DBC_PASSWORD: "test"
       SPRING_DATA_REDIS_HOST: "redis"
@@ -114,8 +241,10 @@ services:
       MANAGEMENT_OPENTELEMETRY_LOGGING_EXPORT_OTLP_ENDPOINT: "http://otel-collector:4318/v1/logs"
       OTEL_SERVICE_NAME: "rcas"
     depends_on:
-      postgres:
+      postgres-coordinator:
         condition: service_healthy
+      citus-init:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     # Command, interval, timeout and retries come from the image HEALTHCHECK (Dockerfile).
@@ -170,8 +299,10 @@ services:
     volumes:
       - ./docker/monitoring/postgres-exporter-queries.yml:/etc/postgres_exporter/queries.yaml:ro
     depends_on:
-      postgres:
+      postgres-coordinator:
         condition: service_healthy
+      citus-init:
+        condition: service_completed_successfully
 
   loki:
     profiles: ["monitoring"]
@@ -202,6 +333,9 @@ services:
 
 volumes:
   pgadmin-data:
+  citus-coordinator-data:
+  citus-worker-1-data:
+  citus-worker-2-data:
 
 networks:
   rcas-docker-network:
