@@ -12,6 +12,18 @@
         "iconColor": "rgba(0, 211, 255, 1)",
         "name": "Annotations & Alerts",
         "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "enable": true,
+        "expr": "ALERTS{alertstate=\"firing\",alertname=~\"Postgres.*\"} == 1",
+        "hide": false,
+        "iconColor": "rgba(255, 96, 96, 1)",
+        "name": "Vacuum Alert Events",
+        "step": "30s"
       }
     ]
   },
@@ -243,6 +255,215 @@
       ],
       "title": "Long Transactions and In-Progress Vacuum",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dead tuple ratio"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "rcas_pg_dead_tuples{job=\"$job\",schema=\"public\",table=\"subscription\"}",
+          "legendFormat": "dead tuples",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "rcas_pg_dead_tuple_ratio_percent{job=\"$job\",schema=\"public\",table=\"subscription\"} / 100",
+          "legendFormat": "dead tuple ratio",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "subscription Vacuum Metrics",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dead tuple ratio"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "rcas_pg_dead_tuples{job=\"$job\",schema=\"public\",table=\"user_t\"}",
+          "legendFormat": "dead tuples",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "rcas_pg_dead_tuple_ratio_percent{job=\"$job\",schema=\"public\",table=\"user_t\"} / 100",
+          "legendFormat": "dead tuple ratio",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "user_t Vacuum Metrics",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "id": 7,
+      "options": {
+        "footer": {
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "ALERTS{alertstate=\"firing\",alertname=~\"Postgres.*\"}",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "{{alertname}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Vacuum Alert State Overview (Firing)",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": false,
+              "Value": false,
+              "__name__": false,
+              "alertname": false,
+              "alertstate": false,
+              "area": false,
+              "instance": false,
+              "job": false,
+              "severity": false
+            },
+            "indexByName": {},
+            "renameByName": {
+              "Time": "time",
+              "Value": "state",
+              "alertname": "alert",
+              "alertstate": "status"
+            }
+          }
+        }
+      ],
+      "type": "table"
     }
   ],
   "refresh": "15s",
@@ -282,7 +503,7 @@
   "timezone": "",
   "title": "RCAS PostgreSQL Vacuum Monitoring",
   "uid": "rcas-postgres-vacuum",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
 
