@@ -45,11 +45,11 @@ monitoring-down:
 
 ## Seed the running PostgreSQL database with the startup service records
 startup-service-records-populator:
-	COMPOSE="$(COMPOSE)" ./scripts/startup-service-records-populator.sh
+	COMPOSE="$(COMPOSE)" ./scripts/startup-citus-service-records-populator.sh
 
 ## Add synthetic write churn for local PostgreSQL vacuum/partition analysis
 performance-vacuum-database:
-	$(COMPOSE) exec -T postgres-coordinator psql -U test -d testdb -v ON_ERROR_STOP=1 < db.migration/performance_vacuum_database.sql
+	$(COMPOSE) exec -T postgres-coordinator psql -U test -d testdb -v ON_ERROR_STOP=1 < docker/citus/performance-vacuum-database.sql
 
 ## Capture a PostgreSQL vacuum/autovacuum snapshot from the running stack (optional OUT=path)
 vacuum-snapshot:

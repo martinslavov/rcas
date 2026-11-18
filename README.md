@@ -286,7 +286,9 @@ make citus-down
 restarting Compose to migrate an existing PostgreSQL database or copy its data into Citus. For disposable local data,
 recreating the Citus volumes initializes the schema but deletes all database data. Keeping existing user data requires a
 separately reviewed migration and rollback plan covering references, registry validation, sequences, grants and caches.
-The existing PostgreSQL migration scripts remain for Testcontainers and are not executed by the Citus Compose stack.
+The PostgreSQL migration and test-support scripts remain available for Testcontainers. Compose startup uses the Citus
+initializer, while `make startup-service-records-populator` and `make performance-vacuum-database` use Citus-specific
+scripts; the PostgreSQL versions remain unchanged for Testcontainers.
 
 ## Monitoring (profile `monitoring`)
 
@@ -437,7 +439,7 @@ make performance-vacuum-database
 make vacuum-snapshot OUT=build/reports/vacuum-after-workload.txt
 ```
 
-`db.migration/performance_vacuum_database.sql` inserts 30,000 synthetic users across three days, updates their
+`docker/citus/performance-vacuum-database.sql` inserts 30,000 synthetic users across three days, updates their
 `last_login`, deletes every tenth row and runs `ANALYZE`. It does not execute `VACUUM` or disable autovacuum.
 Re-running it replenishes deleted synthetic users and creates more churn, leaving 27,000 synthetic users.
 Use it only in disposable non-production databases. Autovacuum may clean dead tuples before a scrape; repeat the workload
