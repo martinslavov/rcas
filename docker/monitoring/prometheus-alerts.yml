@@ -1,0 +1,50 @@
+groups:
+  - name: postgres-vacuum-safety
+    rules:
+      - alert: PostgresTableBloatGrowth
+        expr: |
+          (dead_tuples_by_table_dead_tuple_ratio_percent{job="postgres-exporter"} > 20)
+          and on (schema, table)
+          (dead_tuples_by_table_dead_tuples{job="postgres-exporter"} > 1000)
+        for: 15m
+        labels:
+          severity: warning
+          area: database
+        annotations:
+          summary: "Dead tuples indicate bloat growth on {{ $labels.schema }}.{{ $labels.table }}"
+          description: "Dead tuple ratio is above 20% and dead tuples exceed 1000 for at least 15 minutes. Run the runbook query set, then schedule VACUUM (ANALYZE) if growth persists."
+          operator_action: "Check long-running transactions first, then run VACUUM (ANALYZE) off-peak. Avoid VACUUM FULL in normal operations."
+
+      - alert: PostgresAutovacuumStalled
+        expr: seconds_since_last_autovacuum_seconds_since_autovacuum{job="postgres-exporter"} > 7200
+        for: 30m
+        labels:
+          severity: warning
+          area: database
+        annotations:
+          summary: "Autovacuum appears stalled on {{ $labels.schema }}.{{ $labels.table }}"
+          description: "No autovacuum observed for more than 2 hours. Investigate blockers and table-level autovacuum settings."
+          operator_action: "Inspect pg_stat_activity for open transactions, then run VACUUM (ANALYZE) if needed and tune autovacuum thresholds."
+
+      - alert: PostgresLongRunningTransaction
+        expr: long_running_transaction_longest_tx_seconds{job="postgres-exporter"} > 900
+        for: 10m
+        labels:
+          severity: critical
+          area: database
+        annotations:
+          summary: "Long-running transaction blocks cleanup"
+          description: "A transaction has been open for more than 15 minutes and can delay tuple cleanup."
+          operator_action: "Identify the blocking session in pg_stat_activity, coordinate cancellation with the owner, and verify autovacuum progress afterward."
+
+      - alert: PostgresVacuumExecutionTooLong
+        expr: max_over_time(vacuum_progress_runtime_vacuum_in_progress_seconds{job="postgres-exporter"}[10m]) > 1800
+        for: 10m
+        labels:
+          severity: warning
+          area: database
+        annotations:
+          summary: "Vacuum execution is running unusually long"
+          description: "A vacuum process has been running for more than 30 minutes in the observed window."
+          operator_action: "Inspect pg_stat_progress_vacuum and IO pressure. If needed, reduce concurrent load and review autovacuum cost settings."
+
