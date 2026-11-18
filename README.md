@@ -69,19 +69,22 @@ The tests use Testcontainers, so Docker must be running.
 
 ### Docker Compose profiles
 
-`docker-compose.yml` splits the stack into infrastructure and the application, so you can choose what to start:
+`docker-compose.yml` defines the complete local stack. `postgres-coordinator` is the Citus coordinator, backed by
+`postgresql-node1` and `postgresql-node2`; Redis, RCAS and monitoring remain on the existing `rcas-docker-network`
+and their usual host ports. The legacy `postgres` network alias remains available for clients started outside Compose.
 
 | Command | What starts |
 |---------|-------------|
-| `docker compose up -d` | Only the infrastructure: PostgreSQL and Redis |
-| `PGADMIN_PASSWORD="$(openssl rand -hex 24)" docker compose --profile db-ui up -d` | Infrastructure and pgAdmin 4, the PostgreSQL web UI |
+| `docker compose up -d` | Citus coordinator, two workers and Redis |
+| `PGADMIN_PASSWORD="$(openssl rand -hex 24)" docker compose --profile db-ui up -d` | Infrastructure and pgAdmin 4 |
 | `docker compose --profile app up -d` | Infrastructure and the `rcas` application |
+| `make build && make monitoring-up` | Build and start the application and full monitoring stack |
 
 `rcas` belongs to the `app` profile, so it is **not** started by default. This lets you run the dependencies in Docker and start the service yourself from the IDE.
 
-To browse or execute SQL against the local PostgreSQL database, start the `db-ui` profile with the command above and open <http://localhost:8081>. pgAdmin runs in local desktop mode without a web login; never expose this profile outside a trusted local machine. The random `PGADMIN_PASSWORD` is only a bootstrap requirement, not a password you need to remember. The UI port is bound to localhost only.
+To browse or execute SQL against the local database, start the `db-ui` profile with the command above and open <http://localhost:8081>. pgAdmin runs in local desktop mode without a web login; never expose this profile outside a trusted local machine. The random `PGADMIN_PASSWORD` is only a bootstrap requirement, not a password you need to remember. The UI port is bound to localhost only.
 
-Expand **Servers → RCAS PostgreSQL**, enter the database password `test`, then open **Databases → testdb → Schemas → public → Tables**. The server connection is provisioned automatically; its host is `postgres`, port `5432`, username `test`, and database `testdb`. Right-click the database and select **Query Tool** to execute SQL. pgAdmin settings persist in the `pgadmin-data` volume; `docker compose --profile db-ui down -v` removes that volume along with other stack volumes.
+Expand **Servers → RCAS Citus Coordinator**, then open **Databases → testdb → Schemas → rcas → Tables**. The server connection is provisioned automatically; its host is `postgres-coordinator`, port `5432`, username `test`, and database `testdb`. Right-click the database and select **Query Tool** to execute SQL. pgAdmin settings persist in the `pgadmin-data` volume; `docker compose --profile db-ui down -v` removes that volume along with other stack volumes.
 
 Stop everything (the `--profile app` flag is needed to also stop the service):
 
@@ -138,14 +141,17 @@ Then visit <http://localhost:8080/app/actuator/health>. `docker pull ghcr.io/mar
 
 | Service | Image | Port | Notes |
 |---------|-------|------|-------|
-| `postgres` | `postgres:15.2` | 5432 | `db.migration/init.sql`, `V2__InsertUser.sql` and `V3__InsertSubscription.sql` run on first start |
+| `postgres-coordinator` | `citusdata/citus:13.2.0-pg15` | 5432 | Citus coordinator; initializes the `rcas` schema and registers both worker nodes |
+| `postgresql-node1`, `postgresql-node2` | `citusdata/citus:13.2.0-pg15` | internal 5432 | Citus worker nodes storing distributed shards |
 | `pgadmin` | `dpage/pgadmin4:9.19` | 8081 | profile `db-ui`; localhost-only pgAdmin 4 with a provisioned RCAS connection |
 | `redis` | `redis:7` | 6379 | |
 | `rcas` | built from `Dockerfile` | 8080 | profile `app` |
 
-All containers share the `rcas-docker-network` network. The Compose project name is `rcas`.
+All containers share the `rcas-docker-network` network. The Compose project name is `rcas`. Coordinator and worker
+volumes retain their existing names so changing service names does not discard local database data.
 
-The database scripts run only when the Postgres container is created for the first time. After changing them, recreate the data with `docker compose --profile app down -v`.
+The Citus initializer runs at startup and updates existing Citus node metadata when worker service names change.
+Do not use `docker compose down -v` unless you intend to delete local database data.
 
 ### Subscription partitioning and upgrades
 
@@ -174,7 +180,7 @@ indexes; set an appropriate maintenance window and lock/statement timeouts for t
 Apply **once**, as the schema owner, with `ON_ERROR_STOP`, against the original unpartitioned table:
 
 ```bash
-docker compose exec -T postgres psql -U test -d testdb -v ON_ERROR_STOP=1 < db.migration/V4__PartitionSubscription.sql
+docker compose exec -T postgres-coordinator psql -U test -d testdb -v ON_ERROR_STOP=1 < db.migration/V4__PartitionSubscription.sql
 ```
 
 The transactional migration locks the table, checks legacy data and supported dependencies, creates and fills the
@@ -222,32 +228,69 @@ migrations are follow-up work, not part of this upgrade.
 
 Fresh databases partition `user_t` by the timestamp column `created_on`. The startup SQL creates three daily
 `user_t_YYYYMMDD` partitions and seeds users on those three dates. The optional startup populator also uses three dates
-for users `1000`–`1002`, retains existing rows and never lowers either ID sequence. It still supports legacy unpartitioned
-user tables after a subscription-only migration.
+for users `1000`–`1002`, retains existing rows and never lowers either ID sequence.
 
-`user_identity` enforces globally unique IDs, usernames and emails with an AFTER row trigger and deferred foreign keys
-in both directions. The application still looks up users by ID; a non-unique ID index on each partition supports those
-lookups, but an ID-only query cannot prune date partitions. PostgreSQL no longer accepts new foreign keys referencing
-only `user_t.id`; any future reference must be designed against the registry or the composite key.
-Do not disable triggers/constraints, detach/drop partitions or modify the registry outside controlled maintenance.
-Truncating users requires `TRUNCATE user_t RESTART IDENTITY CASCADE` to also clear the registry.
+In the original PostgreSQL schema, `user_identity` enforces globally unique IDs, usernames and emails with an AFTER row
+trigger and deferred foreign keys in both directions. The Citus development schema below uses reference tables instead
+and does not carry over those synchronization triggers or reverse foreign keys. The application still looks up users by
+ID; a non-unique ID index on each partition supports those lookups, but an ID-only query cannot prune date partitions.
+PostgreSQL no longer accepts new foreign keys referencing only `user_t.id`; any future reference must be designed
+against the registry or the composite key.
 
 Provision additional days before inserting their records:
 
 ```sql
-SELECT public.ensure_user_day_partition(CURRENT_DATE + 1);
+SELECT rcas.ensure_user_day_partition(CURRENT_DATE + 1);
 ```
 
 Dates without a dedicated partition route to `user_t_default`. Creating a partition fails explicitly if that day's rows
 already exist in the default partition; move them under a separately planned write freeze before retrying.
-Partition creation is explicit, not a daily scheduler. New partitions receive the user autovacuum settings, and
-`V4__AutovacuumTuning.sql` tunes the leaves of both partitioned tables instead of their storage-less parents.
+Partition creation is explicit, not a daily scheduler. The original PostgreSQL migration applies user autovacuum
+settings to new partitions; the Citus Compose schema does not apply the migration's per-table tuning.
 
-**Existing databases:** this user schema change applies to fresh initialization only. Do not execute `init.sql` against
-an existing database and do not expect restarting Compose to migrate it. For disposable local data, recreating the
-PostgreSQL container/volume initializes the new schema, but deletes all database data. Keeping existing user data requires
-a separately reviewed migration and rollback plan covering references, registry validation, sequences, grants and caches.
-The existing subscription migration remains unchanged and is not a user migration.
+### Citus stack
+
+The main Compose stack runs PostgreSQL 15 with Citus 13.2.0: `postgres-coordinator` coordinates
+`postgresql-node1` and `postgresql-node2`. It preserves the daily
+range partitions of `user_t` by `created_on` while hash-distributing users by `id`; subscriptions are hash-partitioned
+by `id` and distributed by `user_id` in the same colocation group as users. Small registry tables are replicated Citus
+reference tables for globally unique user IDs, usernames, emails, subscription IDs and types. This is a local
+development prototype, not a production-ready migration: the existing registry synchronization triggers and reverse
+foreign keys are not carried over, so avoid writes that depend on those guarantees.
+The cluster uses PostgreSQL `trust` authentication for worker communication on the private local Compose network;
+the coordinator's published port is bound to localhost. Do not expose this configuration outside local development.
+
+Build the RCAS image and start the main stack with monitoring:
+
+```bash
+make build && make monitoring-up
+```
+
+The app is at <http://localhost:8080/app/actuator/health>, Grafana at <http://localhost:3000>, Prometheus at
+<http://localhost:9090>, and the Citus coordinator is published on port `5432`. Redis and the monitoring services use
+their normal ports and `rcas-docker-network`. In Docker Desktop, the coordinator and both workers appear as services
+in the same Compose project. The Postgres exporter scrapes the Citus coordinator; worker-specific PostgreSQL metrics
+are not included.
+
+To run the SQL feasibility test against the main stack, use `make citus-daily-partition-test`; it exercises creating a new daily
+partition after distribution and checks reference-table uniqueness and user/subscription colocation. An ID-only user
+lookup routes to one worker but scans that worker's daily partitions; a `created_on` predicate prunes the partitions.
+
+Stop the stack and remove its local database data with:
+
+```bash
+make citus-down
+```
+
+**Existing databases:** Compose initializes the Citus schema only on a fresh coordinator/worker volume. Do not expect
+restarting Compose to migrate an existing PostgreSQL database or copy its data into Citus. For disposable local data,
+recreating the Citus volumes initializes the schema but deletes all database data. Keeping existing user data requires a
+separately reviewed migration and rollback plan covering references, registry validation, sequences, grants and caches.
+The Citus initializer rejects older distributed tables whose shard-key ID columns lack sequence defaults; Citus cannot
+apply those defaults to an already-distributed shard key. Back up any data before recreating such local volumes.
+The PostgreSQL migration and test-support scripts remain available for Testcontainers. Compose startup uses the Citus
+initializer, while `make startup-service-records-populator` and `make performance-vacuum-database` use Citus-specific
+scripts; the PostgreSQL versions remain unchanged for Testcontainers.
 
 ## Monitoring (profile `monitoring`)
 
@@ -279,13 +322,15 @@ already requested these IDs before seeding, cached empty results may remain visi
 entries.
 
 To roll back the added records while keeping the rest of the database, delete subscriptions with the populator types and
-users with the populator usernames from `testdb` (delete subscriptions first). For example:
+their registry entries, then users and their identity entries (delete child rows first). For example:
 
 ```bash
-docker compose exec -T postgres psql -U test -d testdb -v ON_ERROR_STOP=1 <<\SQL
+docker compose exec -T postgres-coordinator psql -U test -d testdb -v ON_ERROR_STOP=1 <<\SQL
 BEGIN;
-DELETE FROM "subscription" WHERE type IN ($p$populator-1001$p$, $p$populator-1002$p$, $p$populator-1003$p$, $p$populator-1004$p$);
-DELETE FROM "user_t" WHERE username IN ($p$populator-user-1000$p$, $p$populator-user-1001$p$, $p$populator-user-1002$p$);
+DELETE FROM rcas.subscription WHERE type IN ($p$populator-1001$p$, $p$populator-1002$p$, $p$populator-1003$p$, $p$populator-1004$p$);
+DELETE FROM rcas.subscription_type_registry WHERE type IN ($p$populator-1001$p$, $p$populator-1002$p$, $p$populator-1003$p$, $p$populator-1004$p$);
+DELETE FROM rcas.user_t WHERE username IN ($p$populator-user-1000$p$, $p$populator-user-1001$p$, $p$populator-user-1002$p$);
+DELETE FROM rcas.user_identity WHERE username IN ($p$populator-user-1000$p$, $p$populator-user-1001$p$, $p$populator-user-1002$p$);
 COMMIT;
 SQL
 ```
@@ -382,7 +427,7 @@ Run manual `VACUUM (ANALYZE)` for specific tables when one of these persists aft
 Example command:
 
 ```bash
-docker compose exec -T postgres psql -U test -d testdb -v ON_ERROR_STOP=1 -c 'VACUUM (ANALYZE) public."subscription";'
+docker compose exec -T postgres-coordinator psql -U test -d testdb -v ON_ERROR_STOP=1 -c 'VACUUM (ANALYZE) rcas."subscription";'
 ```
 
 Avoid `VACUUM FULL` in normal operations. It rewrites the whole table, requires stronger locking, and can block application traffic. Reserve it for controlled maintenance windows with rollback and recovery planning.
@@ -396,12 +441,12 @@ make performance-vacuum-database
 make vacuum-snapshot OUT=build/reports/vacuum-after-workload.txt
 ```
 
-`db.migration/performance_vacuum_database.sql` inserts 30,000 synthetic users across three days, updates their
+`docker/citus/performance-vacuum-database.sql` inserts 30,000 synthetic users across three days, updates their
 `last_login`, deletes every tenth row and runs `ANALYZE`. It does not execute `VACUUM` or disable autovacuum.
 Re-running it replenishes deleted synthetic users and creates more churn, leaving 27,000 synthetic users.
 Use it only in disposable non-production databases. Autovacuum may clean dead tuples before a scrape; repeat the workload
 and allow several 15-second Prometheus scrapes to observe trends in the PostgreSQL vacuum dashboard.
-For manual before/after comparison, run `VACUUM (ANALYZE) public.user_t;` as a separate statement after the workload.
+For manual before/after comparison, run `VACUUM (ANALYZE) rcas.user_t;` as a separate statement after the workload.
 
 ### Alert thresholds and operator actions
 
@@ -422,7 +467,7 @@ Capture before/after evidence from a local or staging stack with:
 make monitoring-up
 make vacuum-snapshot OUT=build/reports/vacuum-before.txt
 # optional churn + manual maintenance step
-docker compose exec -T postgres psql -U test -d testdb -v ON_ERROR_STOP=1 -c 'VACUUM (ANALYZE) public."subscription";'
+docker compose exec -T postgres-coordinator psql -U test -d testdb -v ON_ERROR_STOP=1 -c 'VACUUM (ANALYZE) rcas."subscription";'
 make vacuum-snapshot OUT=build/reports/vacuum-after.txt
 ```
 

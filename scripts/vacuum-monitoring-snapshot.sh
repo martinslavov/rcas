@@ -23,10 +23,10 @@ SELECT
   COALESCE(array_to_string(c.reloptions, ', '), '(default)') AS reloptions
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE n.nspname = 'public'
+WHERE n.nspname = 'rcas'
   AND (c.relname IN ('user_t', 'subscription')
        OR c.oid IN (SELECT inhrelid FROM pg_inherits
-                    WHERE inhparent IN ('public.user_t'::regclass, 'public.subscription'::regclass)))
+                    WHERE inhparent IN ('rcas.user_t'::regclass, 'rcas.subscription'::regclass)))
 ORDER BY c.relname;
 
 \echo [dead_tuples]
@@ -39,9 +39,9 @@ SELECT
   last_autovacuum,
   last_autoanalyze
 FROM pg_stat_user_tables
-WHERE relid IN ('public.user_t'::regclass, 'public.subscription'::regclass)
+WHERE relid IN ('rcas.user_t'::regclass, 'rcas.subscription'::regclass)
    OR relid IN (SELECT inhrelid FROM pg_inherits
-                WHERE inhparent IN ('public.user_t'::regclass, 'public.subscription'::regclass))
+                WHERE inhparent IN ('rcas.user_t'::regclass, 'rcas.subscription'::regclass))
 ORDER BY relname;
 
 \echo [long_running_transactions]
@@ -64,11 +64,10 @@ ORDER BY duration_seconds DESC;
 SQL
 )
 
-CMD="$COMPOSE_CMD exec -T postgres psql -U $DB_USER -d $DB_NAME -v ON_ERROR_STOP=1"
+CMD="$COMPOSE_CMD exec -T postgres-coordinator psql -U $DB_USER -d $DB_NAME -v ON_ERROR_STOP=1"
 
 if [[ -n "$OUT_FILE" ]]; then
   printf '%s\n' "$SQL_PAYLOAD" | bash -lc "$CMD" | tee "$OUT_FILE"
 else
   printf '%s\n' "$SQL_PAYLOAD" | bash -lc "$CMD"
 fi
-

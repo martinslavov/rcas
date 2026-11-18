@@ -1,10 +1,13 @@
 # Database vacuum validation evidence
 
-This document records issue #263 validation from a non-production environment.
+This document records issue #263 validation from a non-production environment. The evidence and commands below are
+historical: they were collected against the original PostgreSQL Compose stack before the Citus conversion. They are not
+reproducible against the current Citus Compose schema, which uses the `rcas` schema and does not mount the old
+autovacuum-tuning script.
 
 ## Environment
 
-- Stack: local Docker Compose (`postgres`, `postgres-exporter`, Prometheus, Grafana)
+- Stack: original local Docker Compose (`postgres`, `postgres-exporter`, Prometheus, Grafana)
 - Database: `testdb`
 - Date: 2026-11-18
 
@@ -63,4 +66,3 @@ Source: `build/reports/vacuum-after.txt`
 
 - This validation is non-production only.
 - If PostgreSQL data volume already exists, apply the tuning SQL once (as shown) before taking snapshots.
-

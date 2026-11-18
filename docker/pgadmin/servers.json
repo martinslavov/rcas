@@ -1,9 +1,9 @@
 {
   "Servers": {
     "1": {
-      "Name": "RCAS PostgreSQL",
+      "Name": "RCAS Citus Coordinator",
       "Group": "Local development",
-      "Host": "postgres",
+      "Host": "postgres-coordinator",
       "Port": 5432,
       "MaintenanceDB": "testdb",
       "Username": "test",

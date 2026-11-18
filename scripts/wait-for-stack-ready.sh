@@ -93,10 +93,10 @@ wait_for_command() {
 }
 
 if [[ "$BASE_URL" =~ ^http://(localhost|127\.0\.0\.1)(:[0-9]+)?(/.*)?$ ]]; then
-    wait_for_command "PostgreSQL container" bash -lc "$COMPOSE_CMD ps --status running postgres | grep -q postgres"
+    wait_for_command "PostgreSQL coordinator container" bash -lc "$COMPOSE_CMD ps --status running postgres-coordinator | grep -q postgres-coordinator"
     wait_for_command "Redis container" bash -lc "$COMPOSE_CMD ps --status running redis | grep -q redis"
     wait_for_command "RCAS container" bash -lc "$COMPOSE_CMD ps --status running rcas | grep -q rcas"
-    wait_for_command "PostgreSQL" bash -lc "$COMPOSE_CMD exec -T postgres pg_isready -U test -d testdb"
+    wait_for_command "PostgreSQL coordinator" bash -lc "$COMPOSE_CMD exec -T postgres-coordinator pg_isready -U test -d testdb"
     wait_for_command "Redis" bash -lc "$COMPOSE_CMD exec -T redis redis-cli ping | grep -q '^PONG$'"
     health_start_epoch="$(date +%s)"
     stable_hits=0
@@ -124,5 +124,4 @@ else
 fi
 
 echo "Stack is ready for component and sanity tests"
-
 
