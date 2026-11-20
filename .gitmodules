@@ -1,0 +1,3 @@
+[submodule "vendor/shared-copilot"]
+	path = vendor/shared-copilot
+	url = git@github.com:martinslavov/shared-copilot.git

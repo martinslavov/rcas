@@ -14,6 +14,9 @@ single command (for example `/create-pr-cloud`) or picked automatically when the
 A skill orchestrates; it does not replace the agents. Do not duplicate agent or workflow rules in a skill: link to
 `.github/copilot-instructions.md` and the agent files instead.
 
+The shared `software-engineering-principles` skill and `Senior Java Developer` agent are integrated as described in
+[Shared Copilot integration](shared-copilot-integration.md).
+
 ## Writing a skill
 
 - One directory per skill, kebab-case name matching the `name` frontmatter.
