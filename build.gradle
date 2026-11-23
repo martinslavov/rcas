@@ -18,7 +18,7 @@ repositories {
 
 ext {
 	springdocOpenPIWebFluxVersion = '3.2.0'
-	otelLog4jAppenderVersion = '2.33.1-alpha'
+	otelLog4jAppenderVersion = '2.34.0-alpha'
 }
 
 // Container health check helper (default package, no dependencies); copied into the image as a plain class file
